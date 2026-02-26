@@ -553,30 +553,39 @@ class GameController {
   doSelect(row, col) {
     const s = this.state;
     const unit = s.getUnitAt(row, col);
-    if (!unit || unit.team !== s.currentTeam || unit.attacked) return;
+    if (!unit || unit.team !== s.currentTeam) return;
+    if (unit.moved && unit.attacked) return; // fully done
 
     s.selectedUnitId = unit.id;
 
-    if (unit.moved) {
-      // Already moved — go straight to attack phase
+    if (unit.moved && !unit.attacked) {
+      // Already moved — attack phase only
       const targets = GameRules.getAttackTargets(s, unit);
       if (targets.length > 0) {
         s.highlightedAttacks = targets.map(t => t.id);
         s.phase = PHASE.ATTACK;
-        this.setInfo(`${UNIT_DEFS[unit.type].name}: click a red-highlighted enemy to attack, or click elsewhere to wait.`);
+        this.setInfo(`${UNIT_DEFS[unit.type].name}: click an enemy to attack, or elsewhere to wait.`);
       } else {
-        // No targets available — auto-wait
         unit.attacked = true;
         this.cancelSelection();
         this.setInfo(`${UNIT_DEFS[unit.type].name} waits (no targets in range).`);
         this.checkAllActed();
       }
     } else {
-      // Not moved yet — show movement range
+      // Can move — show movement range
       s.highlightedMoves = GameRules.getMovableCells(s, unit);
+      // If hasn't attacked yet, also show attack targets (fire before move)
+      if (!unit.attacked) {
+        const targets = GameRules.getAttackTargets(s, unit);
+        s.highlightedAttacks = targets.map(t => t.id);
+      }
       s.phase = PHASE.MOVE;
-      const terrain = TERRAIN_DEFS[s.map[row][col]].name;
-      this.setInfo(`${UNIT_DEFS[unit.type].name} selected (HP: ${Math.ceil(unit.hp/10)}, on ${terrain}). Click a cell to move, or click elsewhere to cancel.`);
+      const name = UNIT_DEFS[unit.type].name;
+      if (unit.attacked) {
+        this.setInfo(`${name}: click a cell to move, or elsewhere to cancel.`);
+      } else {
+        this.setInfo(`${name} selected (HP: ${Math.ceil(unit.hp/10)}). Move, attack an adjacent enemy, or click elsewhere to cancel.`);
+      }
     }
     this.updateUI();
   }
@@ -585,26 +594,35 @@ class GameController {
     const s = this.state;
     const unit = s.getUnit(s.selectedUnitId);
 
+    // Fire before move — click an adjacent enemy
+    const target = s.getUnitAt(row, col);
+    if (target && s.highlightedAttacks.includes(target.id)) {
+      this.performAttack(unit, target);
+      return;
+    }
+
+    // Click own unit = deselect
     if (row === unit.row && col === unit.col) {
-      this.afterMove(unit);
-      return;
-    }
-
-    if (!s.highlightedMoves.some(c => c.row === row && c.col === col)) {
       this.cancelSelection();
-      this.doSelect(row, col);
+      this.updateUI();
       return;
     }
 
-    GameRules.moveUnit(s, unit.id, row, col);
-    this.afterMove(unit);
-  }
+    // Valid move destination
+    if (s.highlightedMoves.some(c => c.row === row && c.col === col)) {
+      GameRules.moveUnit(s, unit.id, row, col);
+      unit.moved = true;
+      this.cancelSelection();
+      const name = UNIT_DEFS[unit.type].name;
+      this.setInfo(unit.attacked ? `${name} moved.` : `${name} moved. Select again to attack.`);
+      this.checkAllActed();
+      this.updateUI();
+      return;
+    }
 
-  afterMove(unit) {
-    unit.moved = true;
+    // Clicked elsewhere — cancel and try selecting what was clicked
     this.cancelSelection();
-    this.setInfo(`${UNIT_DEFS[unit.type].name} moved. Select again to attack, or move other units first.`);
-    this.updateUI();
+    this.doSelect(row, col);
   }
 
   doAttack(row, col) {
@@ -613,34 +631,43 @@ class GameController {
     const target = s.getUnitAt(row, col);
 
     if (target && s.highlightedAttacks.includes(target.id)) {
-      const result = GameRules.resolveAttack(s, attacker.id, target.id);
-      let msg = `${TEAM_NAME[attacker.team]} ${UNIT_DEFS[attacker.type].name} deals ${result.damage} dmg`;
-      if (result.defenderDestroyed) {
-        msg += ` — ${UNIT_DEFS[target.type].name} destroyed!`;
-      } else {
-        msg += ` (enemy HP: ${Math.ceil(target.hp/10)})`;
-        if (result.counterDamage > 0) {
-          msg += `. Counter-attack: ${result.counterDamage} dmg`;
-          if (result.attackerDestroyed) {
-            msg += ` — ${UNIT_DEFS[attacker.type].name} destroyed!`;
-          } else {
-            msg += ` (HP: ${Math.ceil(attacker.hp/10)})`;
-          }
+      this.performAttack(attacker, target);
+    } else {
+      // Click elsewhere — cancel, try selecting what was clicked
+      this.cancelSelection();
+      this.doSelect(row, col);
+    }
+  }
+
+  /** Shared combat resolution for both fire-before-move and fire-after-move. */
+  performAttack(attacker, target) {
+    const s = this.state;
+    const result = GameRules.resolveAttack(s, attacker.id, target.id);
+    let msg = `${TEAM_NAME[attacker.team]} ${UNIT_DEFS[attacker.type].name} deals ${result.damage} dmg`;
+    if (result.defenderDestroyed) {
+      msg += ` — ${UNIT_DEFS[target.type].name} destroyed!`;
+    } else {
+      msg += ` (enemy HP: ${Math.ceil(target.hp/10)})`;
+      if (result.counterDamage > 0) {
+        msg += `. Counter-attack: ${result.counterDamage} dmg`;
+        if (result.attackerDestroyed) {
+          msg += ` — ${UNIT_DEFS[attacker.type].name} destroyed!`;
+        } else {
+          msg += ` (HP: ${Math.ceil(attacker.hp/10)})`;
         }
       }
-      this.setInfo(msg);
-
-      const winner = GameRules.checkWinner(s);
-      if (winner) s.winner = winner;
-    } else {
-      this.setInfo(`${UNIT_DEFS[attacker.type].name} waits.`);
     }
 
     attacker.attacked = true;
     this.cancelSelection();
-    if (s.winner) {
+
+    const winner = GameRules.checkWinner(s);
+    if (winner) {
+      s.winner = winner;
       this.setInfo(`${TEAM_NAME[s.winner]} team wins!`);
     } else {
+      if (!attacker.moved && attacker.hp > 0) msg += ' Select again to move.';
+      this.setInfo(msg);
       this.checkAllActed();
     }
     this.updateUI();
