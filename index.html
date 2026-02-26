@@ -170,7 +170,7 @@ class GameState {
     s.units = unitData.map((u, i) => ({
       id: i, type: u.type, team: u.team,
       row: u.row, col: u.col,
-      hp: UNIT_DEFS[u.type].hp, acted: false,
+      hp: UNIT_DEFS[u.type].hp, moved: false, attacked: false,
     }));
     return s;
   }
@@ -269,7 +269,7 @@ class GameRules {
   }
 
   static endTurn(state) {
-    for (const u of state.getLivingUnits(state.currentTeam)) u.acted = false;
+    for (const u of state.getLivingUnits(state.currentTeam)) { u.moved = false; u.attacked = false; }
     state.currentTeam = state.currentTeam === TEAM.BLUE ? TEAM.RED : TEAM.BLUE;
     if (state.currentTeam === TEAM.BLUE) state.turnNumber++;
     state.phase = PHASE.SELECT;
@@ -408,9 +408,10 @@ class CanvasRenderer {
       ctx.arc(cx + 2, cy + 2, radius, 0, Math.PI * 2);
       ctx.fill();
 
-      // Unit circle
+      // Unit circle — fresh / moved / done
       let color = TEAM_COLOR[unit.team];
-      if (unit.acted) color = unit.team === TEAM.BLUE ? '#445570' : '#704545';
+      if (unit.attacked)                    color = unit.team === TEAM.BLUE ? '#445570' : '#704545';
+      else if (unit.moved && !unit.attacked) color = unit.team === TEAM.BLUE ? '#3a6ab8' : '#b85a4a';
       ctx.fillStyle = color;
       ctx.beginPath();
       ctx.arc(cx, cy, radius, 0, Math.PI * 2);
@@ -552,13 +553,31 @@ class GameController {
   doSelect(row, col) {
     const s = this.state;
     const unit = s.getUnitAt(row, col);
-    if (!unit || unit.team !== s.currentTeam || unit.acted) return;
+    if (!unit || unit.team !== s.currentTeam || unit.attacked) return;
 
     s.selectedUnitId = unit.id;
-    s.highlightedMoves = GameRules.getMovableCells(s, unit);
-    s.phase = PHASE.MOVE;
-    const terrain = TERRAIN_DEFS[s.map[row][col]].name;
-    this.setInfo(`${UNIT_DEFS[unit.type].name} selected (HP: ${Math.ceil(unit.hp/10)}, on ${terrain}). Click a highlighted cell to move, or click unit again to stay.`);
+
+    if (unit.moved) {
+      // Already moved — go straight to attack phase
+      const targets = GameRules.getAttackTargets(s, unit);
+      if (targets.length > 0) {
+        s.highlightedAttacks = targets.map(t => t.id);
+        s.phase = PHASE.ATTACK;
+        this.setInfo(`${UNIT_DEFS[unit.type].name}: click a red-highlighted enemy to attack, or click elsewhere to wait.`);
+      } else {
+        // No targets available — auto-wait
+        unit.attacked = true;
+        this.cancelSelection();
+        this.setInfo(`${UNIT_DEFS[unit.type].name} waits (no targets in range).`);
+        this.checkAllActed();
+      }
+    } else {
+      // Not moved yet — show movement range
+      s.highlightedMoves = GameRules.getMovableCells(s, unit);
+      s.phase = PHASE.MOVE;
+      const terrain = TERRAIN_DEFS[s.map[row][col]].name;
+      this.setInfo(`${UNIT_DEFS[unit.type].name} selected (HP: ${Math.ceil(unit.hp/10)}, on ${terrain}). Click a cell to move, or click elsewhere to cancel.`);
+    }
     this.updateUI();
   }
 
@@ -582,20 +601,9 @@ class GameController {
   }
 
   afterMove(unit) {
-    const s = this.state;
-    s.highlightedMoves = [];
-
-    const targets = GameRules.getAttackTargets(s, unit);
-    if (targets.length > 0) {
-      s.highlightedAttacks = targets.map(t => t.id);
-      s.phase = PHASE.ATTACK;
-      this.setInfo(`Click a red-highlighted enemy to attack, or click elsewhere to wait.`);
-    } else {
-      unit.acted = true;
-      this.cancelSelection();
-      this.setInfo(`${UNIT_DEFS[unit.type].name} has no targets in range.`);
-      this.checkAllActed();
-    }
+    unit.moved = true;
+    this.cancelSelection();
+    this.setInfo(`${UNIT_DEFS[unit.type].name} moved. Select again to attack, or move other units first.`);
     this.updateUI();
   }
 
@@ -628,7 +636,7 @@ class GameController {
       this.setInfo(`${UNIT_DEFS[attacker.type].name} waits.`);
     }
 
-    attacker.acted = true;
+    attacker.attacked = true;
     this.cancelSelection();
     if (s.winner) {
       this.setInfo(`${TEAM_NAME[s.winner]} team wins!`);
@@ -656,7 +664,7 @@ class GameController {
 
   checkAllActed() {
     const s = this.state;
-    if (s.getLivingUnits(s.currentTeam).every(u => u.acted)) {
+    if (s.getLivingUnits(s.currentTeam).every(u => u.attacked)) {
       this.setInfo(this.infoPanel.textContent + ' All units done — click End Turn.');
     }
   }
