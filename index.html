@@ -621,9 +621,20 @@ class GameController {
     if (s.highlightedMoves.some(c => c.row === row && c.col === col)) {
       GameRules.moveUnit(s, unit.id, row, col);
       unit.moved = true;
-      this.cancelSelection();
       const name = UNIT_DEFS[unit.type].name;
-      this.setInfo(unit.attacked ? `${name} moved.` : `${name} moved. Select again to attack.`);
+      if (!unit.attacked) {
+        const targets = GameRules.getAttackTargets(s, unit);
+        if (targets.length > 0) {
+          s.highlightedMoves = [];
+          s.highlightedAttacks = targets.map(t => t.id);
+          s.phase = PHASE.ATTACK;
+          this.setInfo(`${name} moved. Click an enemy to attack, or elsewhere to cancel.`);
+          this.updateUI();
+          return;
+        }
+      }
+      this.cancelSelection();
+      this.setInfo(`${name} moved.`);
       this.checkAllActed();
       this.updateUI();
       return;
