@@ -17,22 +17,25 @@ The code is organized into four cleanly separated layers in `index.html`:
 
 ## Current Game State
 
-- 8x8 hex grid (pointy-top, odd-r offset coordinates), two terrain types (plains, mountains)
-- Two unit types: Infantry (I, range 1) and Archer (A, range 2), 6 per side
+- 9x9 hex grid (pointy-top, odd-r offset coordinates), four terrain types (plains, mountains, forest, water)
+- Four unit types: Swordsman (S, move 3, range 1), Spearman (P, move 3, range 1), Archer (A, move 3, range 2), Cavalry (C, move 4, range 1), 7 per side
 - Hotseat two-player (Blue/Red), click to select/move/attack
 - Units can fire before moving, move then attack, or just do one
 - After moving, attack targets auto-highlight if enemies are in range
 - Combat has range-gated counter-attacks, damage scales with HP (floors at ~50%)
 - HP displayed as actual values (0-100)
-- Mountains: +30% defense, 2 move cost for infantry and archers
+- Mountains: +30% defense, 3 move cost for swordsmen/spearmen/archers, impassable for cavalry
+- Forest: +30% defense, 2 move cost for all units
+- Water: impassable for all units
 - Toggleable help panel with unit stats, damage table, terrain modifiers, combat notes
 
 ## Combat Mechanics
 
 - **Damage formula:** `base * atkMod * (100 - defBonus) / 100`, minimum 1
 - **Damage scaling:** `atkMod = 0.5 + 0.5 * (hp / 100)` — wounded units deal 50-100% damage
-- **Counter-attacks:** Defender returns fire using their reduced (post-damage) HP, but only if their range reaches the attacker. Infantry can't counter archers shooting from 2 hexes away.
-- **Terrain defense:** Mountains give +30% damage reduction to defender
+- **Type advantages:** Swordsman strong vs Spearman; Spearman & Archer strong vs Cavalry; Cavalry strong vs Swordsman & Archer. Strong = 70 base damage, neutral = 55.
+- **Counter-attacks:** Defender returns fire using their reduced (post-damage) HP, but only if their range reaches the attacker. Melee units can't counter archers shooting from 2 hexes away.
+- **Terrain defense:** Mountains and forests give +30% damage reduction to defender
 
 ## Hex Grid Details
 
@@ -52,4 +55,4 @@ Game balance lives in constants at the top of the file: `UNIT_DEFS`, `TERRAIN_DE
 - **New renderer:** Swap CanvasRenderer for WebGL/DOM/terminal
 - **Networking:** Sync serialized GameState between clients
 - **Map generation:** Random terrain placement (logic layer, not rendering)
-- **More terrain/unit types:** Add entries to TERRAIN_DEFS, UNIT_DEFS, DAMAGE_TABLE
+- **More terrain/unit types:** Add entries to TERRAIN_DEFS, UNIT_DEFS, DAMAGE_TABLE (forest, water, cavalry already added)
