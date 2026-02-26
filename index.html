@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tactical Battle System</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #1a1a2e;
+  color: #eee;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 100vh;
+  padding: 20px;
+  user-select: none;
+}
+#header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+#turn-info { font-size: 18px; font-weight: bold; }
+#end-turn {
+  padding: 8px 20px;
+  font-size: 14px;
+  cursor: pointer;
+  border: none;
+  border-radius: 4px;
+  font-weight: bold;
+  transition: opacity 0.2s;
+}
+#end-turn:hover { opacity: 0.85; }
+#end-turn:disabled { opacity: 0.5; cursor: default; }
+canvas { border: 2px solid #333; cursor: pointer; display: block; }
+#info-panel {
+  margin-top: 10px;
+  padding: 10px;
+  background: #16213e;
+  border-radius: 4px;
+  min-height: 40px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+</style>
+</head>
+<body>
+<div id="header">
+  <span id="turn-info"></span>
+  <button id="end-turn">End Turn</button>
+</div>
+<canvas id="game"></canvas>
+<div id="info-panel">Click a unit to select it.</div>
+
+<script>
+// ============================================================
+//  DATA DEFINITIONS — Constants that define game rules.
+//  Edit these to tune gameplay without touching logic.
+// ============================================================
+
+const COLS = 8, ROWS = 8;
+
+const TERRAIN = { PLAINS: 'plains', MOUNTAINS: 'mountains' };
+const TEAM   = { BLUE: 1, RED: 2 };
+const PHASE  = { SELECT: 'select', MOVE: 'move', ATTACK: 'attack' };
+
+const TEAM_NAME  = { [TEAM.BLUE]: 'Blue', [TEAM.RED]: 'Red' };
+const TEAM_COLOR = { [TEAM.BLUE]: '#4488ff', [TEAM.RED]: '#ff4444' };
+
+const UNIT_DEFS = {
+  infantry: { name: 'Infantry', hp: 100, move: 3, range: 1 },
+  tank:     { name: 'Tank',     hp: 100, move: 5, range: 1 },
+};
+
+const TERRAIN_DEFS = {
+  [TERRAIN.PLAINS]:    { name: 'Plains',    defense: 0,  moveCost: { infantry: 1, tank: 1 } },
+  [TERRAIN.MOUNTAINS]: { name: 'Mountains', defense: 30, moveCost: { infantry: 2, tank: Infinity } },
+};
+
+// Base damage: DAMAGE_TABLE[attackerType][defenderType]
+const DAMAGE_TABLE = {
+  infantry: { infantry: 55, tank: 15 },
+  tank:     { infantry: 75, tank: 55 },
+};
+
+// ============================================================
+//  HEX GRID — Pointy-top hexes, odd-r offset coordinates.
+//  Odd rows are shifted right by half a hex width.
+// ============================================================
+
+const HEX_SIZE = 34;                        // center to vertex
+const SQRT3   = Math.sqrt(3);
+const HEX_W   = SQRT3 * HEX_SIZE;           // hex width (flat-to-flat)
+const HEX_H   = 2 * HEX_SIZE;               // hex height (point-to-point)
+
+// 6 neighbor offsets, indexed by row parity: [even-row, odd-row]
+const HEX_DIRS = [
+  [[-1,-1], [-1, 0], [0,-1], [0, 1], [1,-1], [1, 0]],   // even rows
+  [[-1, 0], [-1, 1], [0,-1], [0, 1], [1, 0], [1, 1]],   // odd rows
+];
+
+/** Returns in-bounds hex neighbors for a cell at (row, col). */
+function hexNeighbors(row, col) {
+  const dirs = HEX_DIRS[row & 1];
+  const result = [];
+  for (const [dr, dc] of dirs) {
+    const nr = row + dr, nc = col + dc;
+    if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS) result.push({ row: nr, col: nc });
+  }
+  return result;
+}
+
+/** Convert offset (row, col) to pixel center of the hex. */
+function hexToPixel(row, col) {
+  return {
+    x: HEX_W * (col + 0.5 * (row & 1)) + HEX_W / 2,
+    y: HEX_SIZE * 1.5 * row + HEX_SIZE,
+  };
+}
+
+/** Convert pixel position to offset (row, col) via axial rounding. */
+function pixelToHex(px, py) {
+  // Undo the origin offset to get coords relative to hex (0,0) center
+  const x = px - HEX_W / 2;
+  const y = py - HEX_SIZE;
+  // Pixel to fractional axial (pointy-top)
+  const q = (SQRT3 / 3 * x - y / 3) / HEX_SIZE;
+  const r = (2 / 3 * y) / HEX_SIZE;
+  // Cube round
+  const s = -q - r;
+  let rq = Math.round(q), rr = Math.round(r), rs = Math.round(s);
+  const dq = Math.abs(rq - q), dr = Math.abs(rr - r), ds = Math.abs(rs - s);
+  if (dq > dr && dq > ds) rq = -rr - rs;
+  else if (dr > ds)        rr = -rq - rs;
+  // Axial to offset (odd-r)
+  const col = rq + (rr - (rr & 1)) / 2;
+  const row = rr;
+  if (row < 0 || row >= ROWS || col < 0 || col >= COLS) return null;
+  return { row, col };
+}
+
+// Canvas dimensions to fit the hex grid exactly
+const CANVAS_W = Math.ceil(HEX_W * (COLS + 0.5));
+const CANVAS_H = Math.ceil(HEX_SIZE * (1.5 * ROWS + 0.5));
+
+// ============================================================
+//  GAME STATE — Pure data container, fully serializable.
+//  No methods with side effects. No DOM references.
+// ============================================================
+
+class GameState {
+  constructor() {
+    this.map = [];               // 2D array of TERRAIN values
+    this.units = [];             // Array of unit objects
+    this.currentTeam = TEAM.BLUE;
+    this.turnNumber = 1;
+    this.phase = PHASE.SELECT;
+    this.selectedUnitId = null;
+    this.highlightedMoves = [];  // [{row, col}]
+    this.highlightedAttacks = []; // [unitId]
+    this.winner = null;
+  }
+
+  static createInitial(mapData, unitData) {
+    const s = new GameState();
+    s.map = mapData;
+    s.units = unitData.map((u, i) => ({
+      id: i, type: u.type, team: u.team,
+      row: u.row, col: u.col,
+      hp: UNIT_DEFS[u.type].hp, acted: false,
+    }));
+    return s;
+  }
+
+  getUnit(id)        { return this.units.find(u => u.id === id); }
+  getUnitAt(row, col) { return this.units.find(u => u.row === row && u.col === col && u.hp > 0); }
+  getLivingUnits(team) { return this.units.filter(u => u.team === team && u.hp > 0); }
+
+  serialize()              { return JSON.parse(JSON.stringify(this)); }
+  static deserialize(json) { return Object.assign(new GameState(), JSON.parse(JSON.stringify(json))); }
+}
+
+// ============================================================
+//  GAME RULES — Pure functions operating on GameState.
+//  No side effects, no DOM, no rendering. Fully testable.
+// ============================================================
+
+class GameRules {
+
+  /** Returns all cells a unit can move to, respecting terrain and occupancy. */
+  static getMovableCells(state, unit) {
+    const maxMove = UNIT_DEFS[unit.type].move;
+    const visited = new Map();
+    const queue = [{ row: unit.row, col: unit.col, remaining: maxMove }];
+    visited.set(`${unit.row},${unit.col}`, maxMove);
+
+    while (queue.length > 0) {
+      const { row, col, remaining } = queue.shift();
+      for (const nb of hexNeighbors(row, col)) {
+        const cost = TERRAIN_DEFS[state.map[nb.row][nb.col]].moveCost[unit.type];
+        if (cost === Infinity) continue;
+        const rem = remaining - cost;
+        if (rem < 0) continue;
+        const key = `${nb.row},${nb.col}`;
+        if (visited.has(key) && visited.get(key) >= rem) continue;
+        const occ = state.getUnitAt(nb.row, nb.col);
+        if (occ && occ.team !== unit.team) continue;
+        visited.set(key, rem);
+        queue.push({ row: nb.row, col: nb.col, remaining: rem });
+      }
+    }
+
+    const cells = [];
+    for (const [key] of visited) {
+      const [r, c] = key.split(',').map(Number);
+      const occ = state.getUnitAt(r, c);
+      if (occ && occ.id !== unit.id) continue;
+      cells.push({ row: r, col: c });
+    }
+    return cells;
+  }
+
+  /** Returns enemy units in adjacent hexes. */
+  static getAttackTargets(state, unit) {
+    const targets = [];
+    for (const nb of hexNeighbors(unit.row, unit.col)) {
+      const target = state.getUnitAt(nb.row, nb.col);
+      if (target && target.team !== unit.team) targets.push(target);
+    }
+    return targets;
+  }
+
+  static calculateDamage(attackerType, attackerHp, defenderType, defenderTerrain) {
+    const base = DAMAGE_TABLE[attackerType][defenderType];
+    const atkMod = attackerHp / 100;
+    const defBonus = TERRAIN_DEFS[defenderTerrain].defense;
+    return Math.max(1, Math.round(base * atkMod * (100 - defBonus) / 100));
+  }
+
+  static resolveAttack(state, attackerId, defenderId) {
+    const atk = state.getUnit(attackerId);
+    const def = state.getUnit(defenderId);
+    const defTerrain = state.map[def.row][def.col];
+    const atkTerrain = state.map[atk.row][atk.col];
+
+    const damage = this.calculateDamage(atk.type, atk.hp, def.type, defTerrain);
+    def.hp = Math.max(0, def.hp - damage);
+
+    let counterDamage = 0;
+    if (def.hp > 0) {
+      counterDamage = this.calculateDamage(def.type, def.hp, atk.type, atkTerrain);
+      atk.hp = Math.max(0, atk.hp - counterDamage);
+    }
+
+    return {
+      damage, counterDamage,
+      defenderDestroyed: def.hp <= 0,
+      attackerDestroyed: atk.hp <= 0,
+    };
+  }
+
+  static moveUnit(state, unitId, toRow, toCol) {
+    const unit = state.getUnit(unitId);
+    unit.row = toRow;
+    unit.col = toCol;
+  }
+
+  static endTurn(state) {
+    for (const u of state.getLivingUnits(state.currentTeam)) u.acted = false;
+    state.currentTeam = state.currentTeam === TEAM.BLUE ? TEAM.RED : TEAM.BLUE;
+    if (state.currentTeam === TEAM.BLUE) state.turnNumber++;
+    state.phase = PHASE.SELECT;
+    state.selectedUnitId = null;
+    state.highlightedMoves = [];
+    state.highlightedAttacks = [];
+  }
+
+  static checkWinner(state) {
+    if (state.getLivingUnits(TEAM.BLUE).length === 0) return TEAM.RED;
+    if (state.getLivingUnits(TEAM.RED).length === 0) return TEAM.BLUE;
+    return null;
+  }
+}
+
+// ============================================================
+//  RENDERER — Canvas hex renderer. Swap this class to change
+//  rendering tech (Canvas → WebGL, DOM, terminal, etc.)
+// ============================================================
+
+class CanvasRenderer {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
+    canvas.width = CANVAS_W;
+    canvas.height = CANVAS_H;
+  }
+
+  /** Trace a pointy-top hex path centered at (cx, cy). */
+  hexPath(cx, cy, size) {
+    const ctx = this.ctx;
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const angle = Math.PI / 3 * i - Math.PI / 2;
+      const vx = cx + size * Math.cos(angle);
+      const vy = cy + size * Math.sin(angle);
+      if (i === 0) ctx.moveTo(vx, vy); else ctx.lineTo(vx, vy);
+    }
+    ctx.closePath();
+  }
+
+  render(state, hoverCell) {
+    const ctx = this.ctx;
+    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+    // Background fill (visible in gaps if any)
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+    const moveSet = new Set(state.highlightedMoves.map(c => `${c.row},${c.col}`));
+    const attackSet = new Set(state.highlightedAttacks);
+
+    // -- Terrain hexes --
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const { x: cx, y: cy } = hexToPixel(r, c);
+        const terrain = state.map[r][c];
+
+        // Base terrain fill (slightly oversized to avoid seams)
+        if (terrain === TERRAIN.MOUNTAINS) {
+          this.hexPath(cx, cy, HEX_SIZE + 0.5);
+          ctx.fillStyle = '#7a6548';
+          ctx.fill();
+        } else {
+          this.hexPath(cx, cy, HEX_SIZE + 0.5);
+          ctx.fillStyle = (r + c) % 2 === 0 ? '#7ec850' : '#6ab040';
+          ctx.fill();
+        }
+
+        // Mountain decoration
+        if (terrain === TERRAIN.MOUNTAINS) {
+          const s = HEX_SIZE * 0.55;
+          ctx.fillStyle = '#9a8060';
+          ctx.beginPath();
+          ctx.moveTo(cx - s * 0.7, cy + s * 0.6);
+          ctx.lineTo(cx,           cy - s * 0.7);
+          ctx.lineTo(cx + s * 0.7, cy + s * 0.6);
+          ctx.closePath();
+          ctx.fill();
+          // Snow cap
+          ctx.fillStyle = '#d4c8b0';
+          ctx.beginPath();
+          ctx.moveTo(cx - s * 0.22, cy - s * 0.3);
+          ctx.lineTo(cx,            cy - s * 0.7);
+          ctx.lineTo(cx + s * 0.22, cy - s * 0.3);
+          ctx.closePath();
+          ctx.fill();
+        }
+
+        // Movement highlight
+        if (moveSet.has(`${r},${c}`)) {
+          this.hexPath(cx, cy, HEX_SIZE);
+          ctx.fillStyle = 'rgba(100, 180, 255, 0.35)';
+          ctx.fill();
+        }
+
+        // Hover highlight
+        if (hoverCell && hoverCell.row === r && hoverCell.col === c) {
+          this.hexPath(cx, cy, HEX_SIZE);
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+          ctx.fill();
+        }
+
+        // Hex outline
+        this.hexPath(cx, cy, HEX_SIZE);
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.2)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+    }
+
+    // -- Units --
+    for (const unit of state.units) {
+      if (unit.hp <= 0) continue;
+      const { x: cx, y: cy } = hexToPixel(unit.row, unit.col);
+      const isSelected = unit.id === state.selectedUnitId;
+      const isTarget = attackSet.has(unit.id);
+
+      // Attack target overlay
+      if (isTarget) {
+        this.hexPath(cx, cy, HEX_SIZE);
+        ctx.fillStyle = 'rgba(255, 60, 60, 0.4)';
+        ctx.fill();
+        this.hexPath(cx, cy, HEX_SIZE - 2);
+        ctx.strokeStyle = 'rgba(255, 60, 60, 0.8)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.lineWidth = 1;
+      }
+
+      const radius = HEX_SIZE * 0.38;
+
+      // Shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.3)';
+      ctx.beginPath();
+      ctx.arc(cx + 2, cy + 2, radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Unit circle
+      let color = TEAM_COLOR[unit.team];
+      if (unit.acted) color = unit.team === TEAM.BLUE ? '#445570' : '#704545';
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.lineWidth = 1;
+
+      // Selection ring
+      if (isSelected) {
+        ctx.strokeStyle = '#ffdd00';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius + 4, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.lineWidth = 1;
+      }
+
+      // Unit letter
+      ctx.fillStyle = '#fff';
+      ctx.font = `bold ${HEX_SIZE * 0.5}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(unit.type === 'tank' ? 'T' : 'I', cx, cy);
+
+      // HP bar
+      const barW = HEX_SIZE * 0.9, barH = 4;
+      const barX = cx - barW / 2, barY = cy + radius + 6;
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
+      const hpPct = unit.hp / UNIT_DEFS[unit.type].hp;
+      ctx.fillStyle = hpPct > 0.5 ? '#4c4' : hpPct > 0.25 ? '#cc4' : '#c44';
+      ctx.fillRect(barX, barY, barW * hpPct, barH);
+
+      // HP number
+      ctx.fillStyle = '#fff';
+      ctx.font = `bold ${HEX_SIZE * 0.28}px sans-serif`;
+      ctx.fillText(Math.ceil(unit.hp / 10), cx + radius + 2, cy + radius + 6);
+    }
+  }
+
+  getCellFromPixel(clientX, clientY) {
+    const rect = this.canvas.getBoundingClientRect();
+    return pixelToHex(clientX - rect.left, clientY - rect.top);
+  }
+}
+
+// ============================================================
+//  GAME CONTROLLER — Wires input, rules, state, and renderer.
+//  To add AI: check currentTeam before waiting for clicks.
+//  To add networking: sync state after each action.
+//  To add save/load: serialize/deserialize GameState.
+// ============================================================
+
+class GameController {
+  constructor() {
+    this.state = this.createInitialState();
+    const canvas = document.getElementById('game');
+    this.renderer = new CanvasRenderer(canvas);
+    this.turnInfoEl = document.getElementById('turn-info');
+    this.endTurnBtn = document.getElementById('end-turn');
+    this.infoPanel = document.getElementById('info-panel');
+    this.hoverCell = null;
+
+    // Size header/panel to match canvas
+    const w = canvas.width + 'px';
+    document.getElementById('header').style.width = w;
+    this.infoPanel.style.width = w;
+
+    this.bindInput();
+    this.updateUI();
+  }
+
+  createInitialState() {
+    const P = TERRAIN.PLAINS, M = TERRAIN.MOUNTAINS;
+    const map = [
+      [P, P, P, P, P, P, P, P],
+      [P, P, M, P, P, M, P, P],
+      [P, P, P, P, P, P, P, P],
+      [P, M, P, P, P, P, M, P],
+      [P, M, P, P, P, P, M, P],
+      [P, P, P, P, P, P, P, P],
+      [P, P, M, P, P, M, P, P],
+      [P, P, P, P, P, P, P, P],
+    ];
+    const units = [
+      { type: 'infantry', team: TEAM.BLUE, row: 7, col: 0 },
+      { type: 'infantry', team: TEAM.BLUE, row: 7, col: 1 },
+      { type: 'tank',     team: TEAM.BLUE, row: 7, col: 3 },
+      { type: 'tank',     team: TEAM.BLUE, row: 7, col: 4 },
+      { type: 'infantry', team: TEAM.BLUE, row: 7, col: 6 },
+      { type: 'infantry', team: TEAM.BLUE, row: 7, col: 7 },
+      { type: 'infantry', team: TEAM.RED,  row: 0, col: 0 },
+      { type: 'infantry', team: TEAM.RED,  row: 0, col: 1 },
+      { type: 'tank',     team: TEAM.RED,  row: 0, col: 3 },
+      { type: 'tank',     team: TEAM.RED,  row: 0, col: 4 },
+      { type: 'infantry', team: TEAM.RED,  row: 0, col: 6 },
+      { type: 'infantry', team: TEAM.RED,  row: 0, col: 7 },
+    ];
+    return GameState.createInitial(map, units);
+  }
+
+  // -- Input binding (swap this section for AI/network input) --
+
+  bindInput() {
+    const canvas = this.renderer.canvas;
+    canvas.addEventListener('click', (e) => {
+      if (this.state.winner) return;
+      const cell = this.renderer.getCellFromPixel(e.clientX, e.clientY);
+      if (cell) this.handleClick(cell.row, cell.col);
+    });
+    canvas.addEventListener('mousemove', (e) => {
+      this.hoverCell = this.renderer.getCellFromPixel(e.clientX, e.clientY);
+      this.renderOnly();
+    });
+    canvas.addEventListener('mouseleave', () => {
+      this.hoverCell = null;
+      this.renderOnly();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { this.cancelSelection(); this.updateUI(); }
+    });
+    this.endTurnBtn.addEventListener('click', () => {
+      if (this.state.winner) return;
+      this.doEndTurn();
+    });
+  }
+
+  // -- Action handlers --
+
+  handleClick(row, col) {
+    const s = this.state;
+    if      (s.phase === PHASE.SELECT) this.doSelect(row, col);
+    else if (s.phase === PHASE.MOVE)   this.doMove(row, col);
+    else if (s.phase === PHASE.ATTACK) this.doAttack(row, col);
+  }
+
+  doSelect(row, col) {
+    const s = this.state;
+    const unit = s.getUnitAt(row, col);
+    if (!unit || unit.team !== s.currentTeam || unit.acted) return;
+
+    s.selectedUnitId = unit.id;
+    s.highlightedMoves = GameRules.getMovableCells(s, unit);
+    s.phase = PHASE.MOVE;
+    const terrain = TERRAIN_DEFS[s.map[row][col]].name;
+    this.setInfo(`${UNIT_DEFS[unit.type].name} selected (HP: ${Math.ceil(unit.hp/10)}, on ${terrain}). Click a highlighted cell to move, or click unit again to stay.`);
+    this.updateUI();
+  }
+
+  doMove(row, col) {
+    const s = this.state;
+    const unit = s.getUnit(s.selectedUnitId);
+
+    if (row === unit.row && col === unit.col) {
+      this.afterMove(unit);
+      return;
+    }
+
+    if (!s.highlightedMoves.some(c => c.row === row && c.col === col)) {
+      this.cancelSelection();
+      this.doSelect(row, col);
+      return;
+    }
+
+    GameRules.moveUnit(s, unit.id, row, col);
+    this.afterMove(unit);
+  }
+
+  afterMove(unit) {
+    const s = this.state;
+    s.highlightedMoves = [];
+
+    const targets = GameRules.getAttackTargets(s, unit);
+    if (targets.length > 0) {
+      s.highlightedAttacks = targets.map(t => t.id);
+      s.phase = PHASE.ATTACK;
+      this.setInfo(`Click a red-highlighted enemy to attack, or click elsewhere to wait.`);
+    } else {
+      unit.acted = true;
+      this.cancelSelection();
+      this.setInfo(`${UNIT_DEFS[unit.type].name} has no targets in range.`);
+      this.checkAllActed();
+    }
+    this.updateUI();
+  }
+
+  doAttack(row, col) {
+    const s = this.state;
+    const attacker = s.getUnit(s.selectedUnitId);
+    const target = s.getUnitAt(row, col);
+
+    if (target && s.highlightedAttacks.includes(target.id)) {
+      const result = GameRules.resolveAttack(s, attacker.id, target.id);
+      let msg = `${TEAM_NAME[attacker.team]} ${UNIT_DEFS[attacker.type].name} deals ${result.damage} dmg`;
+      if (result.defenderDestroyed) {
+        msg += ` — ${UNIT_DEFS[target.type].name} destroyed!`;
+      } else {
+        msg += ` (enemy HP: ${Math.ceil(target.hp/10)})`;
+        if (result.counterDamage > 0) {
+          msg += `. Counter-attack: ${result.counterDamage} dmg`;
+          if (result.attackerDestroyed) {
+            msg += ` — ${UNIT_DEFS[attacker.type].name} destroyed!`;
+          } else {
+            msg += ` (HP: ${Math.ceil(attacker.hp/10)})`;
+          }
+        }
+      }
+      this.setInfo(msg);
+
+      const winner = GameRules.checkWinner(s);
+      if (winner) s.winner = winner;
+    } else {
+      this.setInfo(`${UNIT_DEFS[attacker.type].name} waits.`);
+    }
+
+    attacker.acted = true;
+    this.cancelSelection();
+    if (s.winner) {
+      this.setInfo(`${TEAM_NAME[s.winner]} team wins!`);
+    } else {
+      this.checkAllActed();
+    }
+    this.updateUI();
+  }
+
+  doEndTurn() {
+    GameRules.endTurn(this.state);
+    this.setInfo(`${TEAM_NAME[this.state.currentTeam]}'s turn. Select a unit.`);
+    this.updateUI();
+  }
+
+  // -- Helpers --
+
+  cancelSelection() {
+    const s = this.state;
+    s.selectedUnitId = null;
+    s.highlightedMoves = [];
+    s.highlightedAttacks = [];
+    s.phase = PHASE.SELECT;
+  }
+
+  checkAllActed() {
+    const s = this.state;
+    if (s.getLivingUnits(s.currentTeam).every(u => u.acted)) {
+      this.setInfo(this.infoPanel.textContent + ' All units done — click End Turn.');
+    }
+  }
+
+  setInfo(text) { this.infoPanel.textContent = text; }
+
+  renderOnly() { this.renderer.render(this.state, this.hoverCell); }
+
+  updateUI() {
+    const s = this.state;
+    const color = TEAM_COLOR[s.currentTeam];
+    if (s.winner) {
+      this.turnInfoEl.innerHTML = `<span style="color:${TEAM_COLOR[s.winner]}">${TEAM_NAME[s.winner]} Wins!</span>`;
+      this.endTurnBtn.disabled = true;
+    } else {
+      this.turnInfoEl.innerHTML = `Turn ${s.turnNumber} — <span style="color:${color}">${TEAM_NAME[s.currentTeam]}</span>`;
+      this.endTurnBtn.style.background = color;
+      this.endTurnBtn.style.color = '#fff';
+    }
+    this.renderer.render(this.state, this.hoverCell);
+  }
+}
+
+// ============================================================
+//  BOOT
+// ============================================================
+
+const game = new GameController();
+</script>
+</body>
+</html>
