@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Tactical Battle System</title>
+<title>Fantasy Tactical Battle</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
@@ -72,18 +72,18 @@ const TEAM_COLOR = { [TEAM.BLUE]: '#4488ff', [TEAM.RED]: '#ff4444' };
 
 const UNIT_DEFS = {
   infantry: { name: 'Infantry', hp: 100, move: 3, range: 1 },
-  tank:     { name: 'Tank',     hp: 100, move: 5, range: 1 },
+  archer:   { name: 'Archer',   hp: 100, move: 3, range: 2 },
 };
 
 const TERRAIN_DEFS = {
-  [TERRAIN.PLAINS]:    { name: 'Plains',    defense: 0,  moveCost: { infantry: 1, tank: 1 } },
-  [TERRAIN.MOUNTAINS]: { name: 'Mountains', defense: 30, moveCost: { infantry: 2, tank: Infinity } },
+  [TERRAIN.PLAINS]:    { name: 'Plains',    defense: 0,  moveCost: { infantry: 1, archer: 1 } },
+  [TERRAIN.MOUNTAINS]: { name: 'Mountains', defense: 30, moveCost: { infantry: 2, archer: 2 } },
 };
 
 // Base damage: DAMAGE_TABLE[attackerType][defenderType]
 const DAMAGE_TABLE = {
-  infantry: { infantry: 55, tank: 15 },
-  tank:     { infantry: 75, tank: 55 },
+  infantry: { infantry: 55, archer: 55 },
+  archer:   { infantry: 55, archer: 55 },
 };
 
 // ============================================================
@@ -140,6 +140,13 @@ function pixelToHex(px, py) {
   const row = rr;
   if (row < 0 || row >= ROWS || col < 0 || col >= COLS) return null;
   return { row, col };
+}
+
+/** Hex distance between two offset cells (via cube coordinates). */
+function hexDistance(r1, c1, r2, c2) {
+  const x1 = c1 - (r1 - (r1 & 1)) / 2, z1 = r1, y1 = -x1 - z1;
+  const x2 = c2 - (r2 - (r2 & 1)) / 2, z2 = r2, y2 = -x2 - z2;
+  return Math.max(Math.abs(x1 - x2), Math.abs(y1 - y2), Math.abs(z1 - z2));
 }
 
 // Canvas dimensions to fit the hex grid exactly
@@ -223,12 +230,15 @@ class GameRules {
     return cells;
   }
 
-  /** Returns enemy units in adjacent hexes. */
+  /** Returns enemy units within attack range. */
   static getAttackTargets(state, unit) {
+    const range = UNIT_DEFS[unit.type].range;
     const targets = [];
-    for (const nb of hexNeighbors(unit.row, unit.col)) {
-      const target = state.getUnitAt(nb.row, nb.col);
-      if (target && target.team !== unit.team) targets.push(target);
+    for (const other of state.units) {
+      if (other.hp <= 0 || other.team === unit.team) continue;
+      if (hexDistance(unit.row, unit.col, other.row, other.col) <= range) {
+        targets.push(other);
+      }
     }
     return targets;
   }
@@ -250,7 +260,8 @@ class GameRules {
     def.hp = Math.max(0, def.hp - damage);
 
     let counterDamage = 0;
-    if (def.hp > 0) {
+    const dist = hexDistance(atk.row, atk.col, def.row, def.col);
+    if (def.hp > 0 && dist <= UNIT_DEFS[def.type].range) {
       counterDamage = this.calculateDamage(def.type, def.hp, atk.type, atkTerrain);
       atk.hp = Math.max(0, atk.hp - counterDamage);
     }
@@ -436,7 +447,7 @@ class CanvasRenderer {
       ctx.font = `bold ${HEX_SIZE * 0.5}px sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(unit.type === 'tank' ? 'T' : 'I', cx, cy);
+      ctx.fillText(unit.type === 'archer' ? 'A' : 'I', cx, cy);
 
       // HP bar
       const barW = HEX_SIZE * 0.9, barH = 4;
@@ -501,14 +512,14 @@ class GameController {
     const units = [
       { type: 'infantry', team: TEAM.BLUE, row: 7, col: 0 },
       { type: 'infantry', team: TEAM.BLUE, row: 7, col: 1 },
-      { type: 'tank',     team: TEAM.BLUE, row: 7, col: 3 },
-      { type: 'tank',     team: TEAM.BLUE, row: 7, col: 4 },
+      { type: 'archer',     team: TEAM.BLUE, row: 7, col: 3 },
+      { type: 'archer',     team: TEAM.BLUE, row: 7, col: 4 },
       { type: 'infantry', team: TEAM.BLUE, row: 7, col: 6 },
       { type: 'infantry', team: TEAM.BLUE, row: 7, col: 7 },
       { type: 'infantry', team: TEAM.RED,  row: 0, col: 0 },
       { type: 'infantry', team: TEAM.RED,  row: 0, col: 1 },
-      { type: 'tank',     team: TEAM.RED,  row: 0, col: 3 },
-      { type: 'tank',     team: TEAM.RED,  row: 0, col: 4 },
+      { type: 'archer',     team: TEAM.RED,  row: 0, col: 3 },
+      { type: 'archer',     team: TEAM.RED,  row: 0, col: 4 },
       { type: 'infantry', team: TEAM.RED,  row: 0, col: 6 },
       { type: 'infantry', team: TEAM.RED,  row: 0, col: 7 },
     ];
@@ -566,10 +577,8 @@ class GameController {
         s.phase = PHASE.ATTACK;
         this.setInfo(`${UNIT_DEFS[unit.type].name}: click an enemy to attack, or elsewhere to wait.`);
       } else {
-        unit.attacked = true;
         this.cancelSelection();
-        this.setInfo(`${UNIT_DEFS[unit.type].name} waits (no targets in range).`);
-        this.checkAllActed();
+        this.setInfo(`${UNIT_DEFS[unit.type].name}: no targets in range.`);
       }
     } else {
       // Can move — show movement range
