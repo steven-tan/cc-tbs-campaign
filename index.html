@@ -45,15 +45,79 @@ canvas { border: 2px solid #333; cursor: pointer; display: block; }
   font-size: 14px;
   line-height: 1.4;
 }
+#help-btn {
+  padding: 8px 16px;
+  font-size: 14px;
+  cursor: pointer;
+  border: none;
+  border-radius: 4px;
+  font-weight: bold;
+  background: #555;
+  color: #fff;
+  transition: opacity 0.2s;
+}
+#help-btn:hover { opacity: 0.85; }
+#help-panel {
+  margin-top: 10px;
+  padding: 14px 18px;
+  background: #16213e;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1.5;
+  display: none;
+}
+#help-panel table {
+  border-collapse: collapse;
+  margin: 8px 0;
+}
+#help-panel th, #help-panel td {
+  border: 1px solid #334;
+  padding: 4px 10px;
+  text-align: center;
+}
+#help-panel th {
+  background: #1a2440;
+}
+#help-panel h3 {
+  margin: 10px 0 4px;
+  font-size: 14px;
+  color: #8cf;
+}
+#help-panel h3:first-child { margin-top: 0; }
 </style>
 </head>
 <body>
 <div id="header">
   <span id="turn-info"></span>
-  <button id="end-turn">End Turn</button>
+  <div>
+    <button id="help-btn">Help</button>
+    <button id="end-turn">End Turn</button>
+  </div>
 </div>
 <canvas id="game"></canvas>
 <div id="info-panel">Click a unit to select it.</div>
+<div id="help-panel">
+  <h3>Units</h3>
+  <table>
+    <tr><th>Unit</th><th>HP</th><th>Move</th><th>Range</th></tr>
+    <tr><td>Infantry (I)</td><td>100</td><td>3</td><td>1</td></tr>
+    <tr><td>Archer (A)</td><td>100</td><td>3</td><td>2</td></tr>
+  </table>
+  <h3>Damage (attacker vs defender)</h3>
+  <table>
+    <tr><th></th><th>vs Infantry</th><th>vs Archer</th></tr>
+    <tr><th>Infantry</th><td>55</td><td>55</td></tr>
+    <tr><th>Archer</th><td>55</td><td>55</td></tr>
+  </table>
+  <h3>Terrain</h3>
+  <table>
+    <tr><th>Terrain</th><th>Defense</th><th>Infantry cost</th><th>Archer cost</th></tr>
+    <tr><td>Plains</td><td>+0%</td><td>1</td><td>1</td></tr>
+    <tr><td>Mountains</td><td>+30%</td><td>2</td><td>2</td></tr>
+  </table>
+  <h3>Combat notes</h3>
+  <p>Damaged units deal less damage (down to ~50% at very low HP). Defenders counter-attack if the attacker is within their range. Mountains reduce incoming damage by 30%.</p>
+</div>
 
 <script>
 // ============================================================
@@ -245,7 +309,7 @@ class GameRules {
 
   static calculateDamage(attackerType, attackerHp, defenderType, defenderTerrain) {
     const base = DAMAGE_TABLE[attackerType][defenderType];
-    const atkMod = attackerHp / 100;
+    const atkMod = 0.5 + 0.5 * (attackerHp / 100);
     const defBonus = TERRAIN_DEFS[defenderTerrain].defense;
     return Math.max(1, Math.round(base * atkMod * (100 - defBonus) / 100));
   }
@@ -461,7 +525,7 @@ class CanvasRenderer {
       // HP number
       ctx.fillStyle = '#fff';
       ctx.font = `bold ${HEX_SIZE * 0.28}px sans-serif`;
-      ctx.fillText(Math.ceil(unit.hp / 10), cx + radius + 2, cy + radius + 6);
+      ctx.fillText(unit.hp, cx + radius + 2, cy + radius + 6);
     }
   }
 
@@ -492,6 +556,14 @@ class GameController {
     const w = canvas.width + 'px';
     document.getElementById('header').style.width = w;
     this.infoPanel.style.width = w;
+    const helpPanel = document.getElementById('help-panel');
+    helpPanel.style.width = w;
+    const helpBtn = document.getElementById('help-btn');
+    helpBtn.addEventListener('click', () => {
+      const open = helpPanel.style.display !== 'none';
+      helpPanel.style.display = open ? 'none' : 'block';
+      helpBtn.textContent = open ? 'Help' : 'Hide Help';
+    });
 
     this.bindInput();
     this.updateUI();
@@ -593,7 +665,7 @@ class GameController {
       if (unit.attacked) {
         this.setInfo(`${name}: click a cell to move, or elsewhere to cancel.`);
       } else {
-        this.setInfo(`${name} selected (HP: ${Math.ceil(unit.hp/10)}). Move, attack an adjacent enemy, or click elsewhere to cancel.`);
+        this.setInfo(`${name} selected (HP: ${unit.hp}). Move, attack an adjacent enemy, or click elsewhere to cancel.`);
       }
     }
     this.updateUI();
@@ -667,13 +739,13 @@ class GameController {
     if (result.defenderDestroyed) {
       msg += ` — ${UNIT_DEFS[target.type].name} destroyed!`;
     } else {
-      msg += ` (enemy HP: ${Math.ceil(target.hp/10)})`;
+      msg += ` (enemy HP: ${target.hp})`;
       if (result.counterDamage > 0) {
         msg += `. Counter-attack: ${result.counterDamage} dmg`;
         if (result.attackerDestroyed) {
           msg += ` — ${UNIT_DEFS[attacker.type].name} destroyed!`;
         } else {
-          msg += ` (HP: ${Math.ceil(attacker.hp/10)})`;
+          msg += ` (HP: ${attacker.hp})`;
         }
       }
     }
