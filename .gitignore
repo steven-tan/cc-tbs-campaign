@@ -1,1 +1,2 @@
-.claude/
+.claude/*.jsonl
+.claude/settings.local.json
