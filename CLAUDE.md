@@ -27,7 +27,10 @@ The code is organized into four cleanly separated layers in `index.html`:
 - Mountains: +30% defense, 3 move cost for swordsmen/spearmen/archers, impassable for cavalry
 - Forest: +30% defense, 2 move cost for all units
 - Water: impassable for all units
-- Toggleable help panel with unit stats, damage table, terrain modifiers, combat notes
+- Hover tooltips: unit info (name, HP, terrain defense) on any unit; attack preview (damage, flanking, counter, resulting HP) on valid targets
+- Mobile long press (~400ms) shows same tooltips as desktop hover
+- Click selected unit to deselect in any phase
+- Toggleable help panel with unit stats, damage table, terrain modifiers, flanking, combat notes
 
 ## Combat Mechanics
 
