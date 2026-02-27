@@ -36,6 +36,7 @@ The code is organized into four cleanly separated layers in `index.html`:
 - **Type advantages:** Swordsman strong vs Spearman; Spearman & Archer strong vs Cavalry; Cavalry strong vs Swordsman & Archer. Strong = 70 base damage, neutral = 55.
 - **Counter-attacks:** Defender returns fire using their reduced (post-damage) HP, but only if their range reaches the attacker. Melee units can't counter archers shooting from 2 hexes away.
 - **Terrain defense:** Mountains and forests give +30% damage reduction to defender
+- **Flanking (melee only):** Attacker + 1 ally adjacent to defender = +10% attack. Attacker + 2+ allies = +20%. Ally directly behind defender (backstab) = +25%, overrides count-based bonuses. Counter-attacks do not get flanking bonuses.
 
 ## Hex Grid Details
 
@@ -46,7 +47,7 @@ The code is organized into four cleanly separated layers in `index.html`:
 
 ## Data-Driven Design
 
-Game balance lives in constants at the top of the file: `UNIT_DEFS`, `TERRAIN_DEFS`, `DAMAGE_TABLE`. Tune these without touching logic. Adding new unit/terrain types means adding entries to these tables.
+Game balance lives in constants at the top of the file: `UNIT_DEFS`, `TERRAIN_DEFS`, `DAMAGE_TABLE`, `FLANKING`. Tune these without touching logic. Adding new unit/terrain types means adding entries to these tables.
 
 ## Planned Extension Points (not yet implemented)
 

@@ -125,6 +125,14 @@ canvas { border: 2px solid #333; cursor: pointer; display: block; max-width: 100
     <tr><td>Forest</td><td>+30%</td><td>2</td><td>2</td><td>2</td><td>2</td></tr>
     <tr><td>Water</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
   </table>
+  <h3>Flanking (melee only)</h3>
+  <table>
+    <tr><th>Condition</th><th>Bonus</th></tr>
+    <tr><td>1 ally adjacent to defender</td><td>+10% attack</td></tr>
+    <tr><td>2+ allies adjacent to defender</td><td>+20% attack</td></tr>
+    <tr><td>Ally directly behind defender (backstab)</td><td>+25% attack</td></tr>
+  </table>
+  <p>Backstab overrides count-based bonuses (no further stacking). Counter-attacks do not receive flanking bonuses.</p>
   <h3>Combat notes</h3>
   <p>Damaged units deal less damage (down to ~50% at very low HP). Defenders counter-attack if the attacker is within their range. Mountains and forests reduce incoming damage by 30%. Water is impassable. Cavalry cannot enter mountains. Swordsmen are strong vs spearmen. Spearmen and archers are strong vs cavalry. Cavalry is strong vs swordsmen and archers.</p>
 </div>
@@ -164,6 +172,13 @@ const DAMAGE_TABLE = {
   spearman:  { swordsman: 55, spearman: 55, archer: 55, cavalry: 70 },
   archer:    { swordsman: 55, spearman: 55, archer: 55, cavalry: 70 },
   cavalry:   { swordsman: 70, spearman: 55, archer: 70, cavalry: 55 },
+};
+
+// Flanking bonuses (% attack bonus, melee only)
+const FLANKING = {
+  SUPPORT_1: 10,   // attacker + 1 ally adjacent to defender
+  SUPPORT_2: 20,   // attacker + 2+ allies adjacent to defender
+  BACKSTAB:  25,   // ally directly behind defender (no further stacking)
 };
 
 // ============================================================
@@ -323,6 +338,50 @@ class GameRules {
     return targets;
   }
 
+  /** Calculate flanking attack bonus (melee only). */
+  static getFlankingBonus(state, attacker, defender) {
+    if (hexDistance(attacker.row, attacker.col, defender.row, defender.col) > 1) return 0;
+
+    const dirs = HEX_DIRS[defender.row & 1];
+
+    // Find which direction the attacker is relative to the defender
+    let attackerDirIdx = -1;
+    for (let i = 0; i < 6; i++) {
+      if (defender.row + dirs[i][0] === attacker.row &&
+          defender.col + dirs[i][1] === attacker.col) {
+        attackerDirIdx = i;
+        break;
+      }
+    }
+    if (attackerDirIdx === -1) return 0;
+
+    // Check backstab: ally directly behind defender (opposite hex)
+    const oppIdx = (attackerDirIdx + 3) % 6;
+    const oppR = defender.row + dirs[oppIdx][0];
+    const oppC = defender.col + dirs[oppIdx][1];
+    if (oppR >= 0 && oppR < ROWS && oppC >= 0 && oppC < COLS) {
+      const oppUnit = state.getUnitAt(oppR, oppC);
+      if (oppUnit && oppUnit.team === attacker.team) {
+        return FLANKING.BACKSTAB;
+      }
+    }
+
+    // Count allies adjacent to defender (excluding attacker)
+    let adjacentAllies = 0;
+    for (let i = 0; i < 6; i++) {
+      if (i === attackerDirIdx) continue;
+      const nr = defender.row + dirs[i][0];
+      const nc = defender.col + dirs[i][1];
+      if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS) continue;
+      const u = state.getUnitAt(nr, nc);
+      if (u && u.team === attacker.team) adjacentAllies++;
+    }
+
+    if (adjacentAllies >= 2) return FLANKING.SUPPORT_2;
+    if (adjacentAllies >= 1) return FLANKING.SUPPORT_1;
+    return 0;
+  }
+
   static calculateDamage(attackerType, attackerHp, defenderType, defenderTerrain) {
     const base = DAMAGE_TABLE[attackerType][defenderType];
     const atkMod = 0.5 + 0.5 * (attackerHp / 100);
@@ -336,7 +395,9 @@ class GameRules {
     const defTerrain = state.map[def.row][def.col];
     const atkTerrain = state.map[atk.row][atk.col];
 
-    const damage = this.calculateDamage(atk.type, atk.hp, def.type, defTerrain);
+    const baseDamage = this.calculateDamage(atk.type, atk.hp, def.type, defTerrain);
+    const flankBonus = this.getFlankingBonus(state, atk, def);
+    const damage = flankBonus > 0 ? Math.max(1, Math.round(baseDamage * (100 + flankBonus) / 100)) : baseDamage;
     def.hp = Math.max(0, def.hp - damage);
 
     let counterDamage = 0;
@@ -347,7 +408,7 @@ class GameRules {
     }
 
     return {
-      damage, counterDamage,
+      damage, counterDamage, flankBonus,
       defenderDestroyed: def.hp <= 0,
       attackerDestroyed: atk.hp <= 0,
     };
@@ -402,7 +463,7 @@ class CanvasRenderer {
     ctx.closePath();
   }
 
-  render(state, hoverCell) {
+  render(state, hoverCell, tooltipData) {
     const ctx = this.ctx;
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
@@ -575,6 +636,59 @@ class CanvasRenderer {
       ctx.font = `bold ${HEX_SIZE * 0.28}px sans-serif`;
       ctx.fillText(unit.hp, cx + radius + 2, cy + radius + 6);
     }
+
+    // -- Tooltip --
+    if (tooltipData) this.drawTooltip(tooltipData);
+  }
+
+  drawTooltip({ row, col, lines }) {
+    const ctx = this.ctx;
+    const { x: hx, y: hy } = hexToPixel(row, col);
+    const fontSize = 12;
+    const pad = 8;
+    const lineH = fontSize + 4;
+    ctx.font = `bold ${fontSize}px sans-serif`;
+
+    // Measure width from longest line
+    let maxW = 0;
+    for (const line of lines) maxW = Math.max(maxW, ctx.measureText(line).width);
+    const boxW = maxW + pad * 2;
+    const boxH = lines.length * lineH + pad * 2 - 4;
+
+    // Position: offset above-right of hex, flip if near edges
+    let bx = hx + HEX_SIZE * 0.6;
+    let by = hy - boxH - HEX_SIZE * 0.3;
+    if (bx + boxW > this.canvas.width - 4) bx = hx - boxW - HEX_SIZE * 0.6;
+    if (by < 4) by = hy + HEX_SIZE * 0.6;
+
+    // Draw background
+    ctx.fillStyle = 'rgba(10, 10, 30, 0.88)';
+    ctx.strokeStyle = 'rgba(150, 180, 220, 0.5)';
+    ctx.lineWidth = 1;
+    const r = 4;
+    ctx.beginPath();
+    ctx.moveTo(bx + r, by);
+    ctx.lineTo(bx + boxW - r, by);
+    ctx.arcTo(bx + boxW, by, bx + boxW, by + r, r);
+    ctx.lineTo(bx + boxW, by + boxH - r);
+    ctx.arcTo(bx + boxW, by + boxH, bx + boxW - r, by + boxH, r);
+    ctx.lineTo(bx + r, by + boxH);
+    ctx.arcTo(bx, by + boxH, bx, by + boxH - r, r);
+    ctx.lineTo(bx, by + r);
+    ctx.arcTo(bx, by, bx + r, by, r);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.lineWidth = 1;
+
+    // Draw text
+    ctx.fillStyle = '#eee';
+    ctx.font = `bold ${fontSize}px sans-serif`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    for (let i = 0; i < lines.length; i++) {
+      ctx.fillText(lines[i], bx + pad, by + pad + i * lineH);
+    }
   }
 
   getCellFromPixel(clientX, clientY) {
@@ -674,6 +788,36 @@ class GameController {
     this.endTurnBtn.addEventListener('click', () => {
       if (this.state.winner) return;
       this.doEndTurn();
+    });
+
+    // Long press for mobile tooltips
+    let lpTimer = null;
+    let lpFired = false;
+    canvas.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1) return;
+      lpFired = false;
+      const touch = e.touches[0];
+      const cell = this.renderer.getCellFromPixel(touch.clientX, touch.clientY);
+      lpTimer = setTimeout(() => {
+        if (cell) {
+          this.hoverCell = cell;
+          lpFired = true;
+          this.renderOnly();
+        }
+      }, 400);
+    }, { passive: true });
+    canvas.addEventListener('touchmove', () => {
+      clearTimeout(lpTimer);
+      if (lpFired) { lpFired = false; this.hoverCell = null; this.renderOnly(); }
+    }, { passive: true });
+    canvas.addEventListener('touchend', (e) => {
+      clearTimeout(lpTimer);
+      if (lpFired) {
+        lpFired = false;
+        this.hoverCell = null;
+        this.renderOnly();
+        e.preventDefault(); // suppress click after long press
+      }
     });
   }
 
@@ -777,6 +921,10 @@ class GameController {
 
     if (target && s.highlightedAttacks.includes(target.id)) {
       this.performAttack(attacker, target);
+    } else if (row === attacker.row && col === attacker.col) {
+      // Click own unit = deselect
+      this.cancelSelection();
+      this.updateUI();
     } else {
       // Click elsewhere — cancel, try selecting what was clicked
       this.cancelSelection();
@@ -788,7 +936,9 @@ class GameController {
   performAttack(attacker, target) {
     const s = this.state;
     const result = GameRules.resolveAttack(s, attacker.id, target.id);
+    const flankLabel = result.flankBonus === FLANKING.BACKSTAB ? 'backstab' : 'flanking';
     let msg = `${TEAM_NAME[attacker.team]} ${UNIT_DEFS[attacker.type].name} deals ${result.damage} dmg`;
+    if (result.flankBonus > 0) msg += ` [${flankLabel} +${result.flankBonus}%]`;
     if (result.defenderDestroyed) {
       msg += ` — ${UNIT_DEFS[target.type].name} destroyed!`;
     } else {
@@ -843,7 +993,62 @@ class GameController {
 
   setInfo(text) { this.infoPanel.textContent = text; }
 
-  renderOnly() { this.renderer.render(this.state, this.hoverCell); }
+  computeTooltip() {
+    const s = this.state;
+    if (!this.hoverCell || s.winner) return null;
+    const { row, col } = this.hoverCell;
+    const hoveredUnit = s.getUnitAt(row, col);
+
+    // Attack preview: hovering a valid target while a unit is selected
+    if (hoveredUnit && s.selectedUnitId !== null && s.highlightedAttacks.includes(hoveredUnit.id)) {
+      const atk = s.getUnit(s.selectedUnitId);
+      const def = hoveredUnit;
+      const defTerrain = s.map[def.row][def.col];
+      const atkTerrain = s.map[atk.row][atk.col];
+
+      const baseDmg = GameRules.calculateDamage(atk.type, atk.hp, def.type, defTerrain);
+      const flankBonus = GameRules.getFlankingBonus(s, atk, def);
+      const damage = flankBonus > 0 ? Math.max(1, Math.round(baseDmg * (100 + flankBonus) / 100)) : baseDmg;
+      const defHpAfter = Math.max(0, def.hp - damage);
+
+      const lines = [`${UNIT_DEFS[atk.type].name} \u2192 ${UNIT_DEFS[def.type].name}`];
+      let dmgLine = `Damage: ${damage}`;
+      if (flankBonus > 0) {
+        const label = flankBonus === FLANKING.BACKSTAB ? 'backstab' : 'flanking';
+        dmgLine += `  [${label} +${flankBonus}%]`;
+      }
+      lines.push(dmgLine);
+
+      // Counter-attack preview
+      const dist = hexDistance(atk.row, atk.col, def.row, def.col);
+      if (defHpAfter > 0 && dist <= UNIT_DEFS[def.type].range) {
+        const counterDmg = GameRules.calculateDamage(def.type, defHpAfter, atk.type, atkTerrain);
+        const atkHpAfter = Math.max(0, atk.hp - counterDmg);
+        lines.push(`Counter: ${counterDmg}`);
+        lines.push(`Result: ${atkHpAfter} HP / ${defHpAfter} HP`);
+      } else {
+        lines.push(`Result: ${defHpAfter} HP`);
+      }
+
+      return { row, col, lines };
+    }
+
+    // Unit info: hovering any living unit
+    if (hoveredUnit) {
+      const def = UNIT_DEFS[hoveredUnit.type];
+      const terrain = TERRAIN_DEFS[s.map[row][col]];
+      const lines = [
+        `${def.name} (${TEAM_NAME[hoveredUnit.team]})`,
+        `HP: ${hoveredUnit.hp}/${def.hp}`,
+      ];
+      if (terrain.defense > 0) lines.push(`${terrain.name}: +${terrain.defense}% def`);
+      return { row, col, lines };
+    }
+
+    return null;
+  }
+
+  renderOnly() { this.renderer.render(this.state, this.hoverCell, this.computeTooltip()); }
 
   updateUI() {
     const s = this.state;
@@ -856,7 +1061,7 @@ class GameController {
       this.endTurnBtn.style.background = color;
       this.endTurnBtn.style.color = '#fff';
     }
-    this.renderer.render(this.state, this.hoverCell);
+    this.renderer.render(this.state, this.hoverCell, this.computeTooltip());
   }
 }
 
