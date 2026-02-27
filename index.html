@@ -579,7 +579,9 @@ class CanvasRenderer {
 
   getCellFromPixel(clientX, clientY) {
     const rect = this.canvas.getBoundingClientRect();
-    return pixelToHex(clientX - rect.left, clientY - rect.top);
+    const scaleX = this.canvas.width / rect.width;
+    const scaleY = this.canvas.height / rect.height;
+    return pixelToHex((clientX - rect.left) * scaleX, (clientY - rect.top) * scaleY);
   }
 }
 
