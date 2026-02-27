@@ -18,7 +18,7 @@ body {
   user-select: none;
 }
 #header {
-  display: flex;
+  display: none;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 10px;
@@ -36,8 +36,9 @@ body {
 }
 #end-turn:hover { opacity: 0.85; }
 #end-turn:disabled { opacity: 0.5; cursor: default; }
-canvas { border: 2px solid #333; cursor: pointer; display: block; max-width: 100%; height: auto; }
+canvas { border: 2px solid #333; cursor: pointer; display: none; max-width: 100%; height: auto; }
 #info-panel {
+  display: none;
   margin-top: 10px;
   padding: 10px;
   background: #16213e;
@@ -88,9 +89,141 @@ canvas { border: 2px solid #333; cursor: pointer; display: block; max-width: 100
   color: #8cf;
 }
 #help-panel h3:first-child { margin-top: 0; }
+#start-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  gap: 8px;
+}
+#start-screen h1 {
+  font-size: 36px;
+  color: #8cf;
+  text-shadow: 0 0 20px rgba(100, 180, 255, 0.3);
+  margin-bottom: 4px;
+}
+#start-screen .subtitle {
+  font-size: 16px;
+  color: #aaa;
+  margin-bottom: 20px;
+}
+.start-buttons, #team-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+}
+.start-buttons button, #team-pick button {
+  padding: 12px 40px;
+  font-size: 18px;
+  font-weight: bold;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  min-width: 220px;
+  transition: opacity 0.2s, transform 0.1s;
+}
+.start-buttons button:hover, #team-pick button:hover {
+  opacity: 0.85;
+  transform: scale(1.03);
+}
+#btn-vs-ai { background: #4488ff; color: #fff; }
+#btn-hotseat { background: #ff8844; color: #fff; }
+#btn-about { background: #555; color: #fff; }
+#pick-back { background: #555; color: #fff; }
+#about-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 10, 30, 0.95);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 110;
+}
+.about-content {
+  max-width: 480px;
+  padding: 30px;
+  background: #16213e;
+  border-radius: 8px;
+  border: 1px solid #334;
+  text-align: center;
+  line-height: 1.6;
+}
+.about-content h2 {
+  color: #8cf;
+  margin-bottom: 16px;
+}
+.about-content p {
+  margin-bottom: 12px;
+  color: #ccc;
+}
+#about-close {
+  margin-top: 16px;
+  padding: 10px 30px;
+  font-size: 16px;
+  background: #555;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+#about-close:hover { opacity: 0.85; }
+.diff-row { display: flex; gap: 10px; }
+.diff-btn {
+  padding: 8px 24px;
+  font-size: 16px;
+  font-weight: bold;
+  border: 2px solid #555;
+  border-radius: 6px;
+  cursor: pointer;
+  background: #2a2a3e;
+  color: #aaa;
+  transition: all 0.15s;
+}
+.diff-btn.active {
+  border-color: #8cf;
+  color: #fff;
+  background: #334;
+}
+.diff-btn:hover { opacity: 0.85; }
 </style>
 </head>
 <body>
+<div id="start-screen">
+  <h1>Fantasy Tactical Battle</h1>
+  <p class="subtitle">Hex-based tactical combat</p>
+  <div class="start-buttons">
+    <button id="btn-vs-ai">Play vs AI</button>
+    <button id="btn-hotseat">2P Hotseat</button>
+    <button id="btn-about">About</button>
+  </div>
+  <div id="team-pick" style="display:none;">
+    <p>Difficulty:</p>
+    <div class="diff-row">
+      <button class="diff-btn active" data-diff="normal">Normal</button>
+      <button class="diff-btn" data-diff="hard">Hard</button>
+    </div>
+    <p style="margin-top:16px;">Choose your side:</p>
+    <button id="pick-blue" style="background:#4488ff;color:#fff;padding:12px 40px;font-size:18px;font-weight:bold;border:none;border-radius:6px;cursor:pointer;min-width:220px;">Play as Blue (go first)</button>
+    <button id="pick-red" style="background:#ff4444;color:#fff;padding:12px 40px;font-size:18px;font-weight:bold;border:none;border-radius:6px;cursor:pointer;min-width:220px;">Play as Red</button>
+    <button id="pick-back">Back</button>
+  </div>
+</div>
+<div id="about-overlay">
+  <div class="about-content">
+    <h2>About Fantasy Tactical Battle</h2>
+    <p>Command your army in hex-based tactical combat. Outmaneuver your opponent
+       with swordsmen, spearmen, archers, and cavalry across varied terrain.</p>
+    <p>Use terrain for defense bonuses, set up flanking attacks, and exploit
+       type advantages to defeat the enemy force.</p>
+    <p>Each unit can move and attack once per turn. Combat is deterministic &mdash;
+       plan your moves carefully!</p>
+    <p style="color:#8cf;">In-game, press <strong>Help</strong> for detailed unit stats,
+       damage tables, and terrain modifiers.</p>
+    <button id="about-close">Back</button>
+  </div>
+</div>
 <div id="header">
   <span id="turn-info"></span>
   <div>
@@ -434,6 +567,488 @@ class GameRules {
     if (state.getLivingUnits(TEAM.BLUE).length === 0) return TEAM.RED;
     if (state.getLivingUnits(TEAM.RED).length === 0) return TEAM.BLUE;
     return null;
+  }
+}
+
+// ============================================================
+//  AI PLAYER — Greedy positional AI. No DOM, no side effects.
+//  Reads GameState via GameRules to plan a full turn, returns
+//  an ordered list of actions for GameController to execute.
+// ============================================================
+
+class AIPlayer {
+  constructor(team, difficulty = 'normal') {
+    this.team = team;
+    this.difficulty = difficulty;
+  }
+
+  /** Plan the entire turn. Returns array of actions. */
+  planTurn(state) {
+    const sim = GameState.deserialize(state.serialize());
+    const actions = [];
+    const myUnits = sim.getLivingUnits(this.team);
+    const ordered = this.prioritizeUnits(sim, myUnits);
+
+    // Hard mode: pre-compute tactical context
+    let context = null;
+    if (this.difficulty === 'hard') {
+      context = {
+        dangerMap: this.buildDangerMap(sim),
+        focusTargets: this.identifyFocusTargets(sim),
+      };
+    }
+
+    for (const unit of ordered) {
+      if (unit.hp <= 0) continue;
+      const action = this.planUnitAction(sim, unit, context);
+      actions.push(action);
+      this.applyAction(sim, action);
+    }
+    return actions;
+  }
+
+  /** Hard mode: build a map of which hexes each enemy can reach and attack next turn. */
+  buildDangerMap(state) {
+    const map = new Map();
+    const enemyTeam = this.team === TEAM.BLUE ? TEAM.RED : TEAM.BLUE;
+    const enemies = state.getLivingUnits(enemyTeam);
+
+    for (const enemy of enemies) {
+      const reachable = GameRules.getMovableCells(state, enemy);
+      const threatened = new Set();
+      const range = UNIT_DEFS[enemy.type].range;
+
+      for (const cell of reachable) {
+        for (let r = Math.max(0, cell.row - range - 1); r <= Math.min(ROWS - 1, cell.row + range + 1); r++) {
+          for (let c = Math.max(0, cell.col - range - 1); c <= Math.min(COLS - 1, cell.col + range + 1); c++) {
+            if (hexDistance(cell.row, cell.col, r, c) <= range) {
+              threatened.add(`${r},${c}`);
+            }
+          }
+        }
+      }
+
+      for (const key of threatened) {
+        if (!map.has(key)) map.set(key, []);
+        map.get(key).push(enemy);
+      }
+    }
+    return map;
+  }
+
+  /** Hard mode: identify high-priority targets for coordinated focus fire. */
+  identifyFocusTargets(state) {
+    const enemyTeam = this.team === TEAM.BLUE ? TEAM.RED : TEAM.BLUE;
+    const enemies = state.getLivingUnits(enemyTeam);
+    const myUnits = state.getLivingUnits(this.team);
+
+    // Cache movable cells per unit
+    const moveCache = new Map();
+    for (const unit of myUnits) {
+      moveCache.set(unit.id, GameRules.getMovableCells(state, unit));
+    }
+
+    const analysis = enemies.map(enemy => {
+      let potentialDmg = 0;
+      let reachCount = 0;
+
+      for (const unit of myUnits) {
+        const moveCells = moveCache.get(unit.id);
+        const range = UNIT_DEFS[unit.type].range;
+        let canAttack = false;
+
+        for (const cell of moveCells) {
+          if (hexDistance(cell.row, cell.col, enemy.row, enemy.col) <= range) {
+            canAttack = true;
+            break;
+          }
+        }
+
+        if (canAttack) {
+          reachCount++;
+          potentialDmg += GameRules.calculateDamage(unit.type, unit.hp, enemy.type, state.map[enemy.row][enemy.col]);
+        }
+      }
+
+      return {
+        id: enemy.id,
+        hp: enemy.hp,
+        type: enemy.type,
+        potentialDmg,
+        reachCount,
+        canKill: potentialDmg >= enemy.hp,
+      };
+    });
+
+    // Killable targets first, then wounded, then high-value
+    analysis.sort((a, b) => {
+      if (a.canKill !== b.canKill) return b.canKill - a.canKill;
+      if (a.canKill && b.canKill) return a.reachCount - b.reachCount;
+      return a.hp - b.hp;
+    });
+
+    return analysis.slice(0, 2).map(a => a.id);
+  }
+
+  /** Determine unit execution order for maximum effectiveness. */
+  prioritizeUnits(state, units) {
+    const enemyTeam = this.team === TEAM.BLUE ? TEAM.RED : TEAM.BLUE;
+    const enemies = state.getLivingUnits(enemyTeam);
+
+    const scored = units.map(unit => {
+      let priority = 0;
+
+      // Units that can secure a kill go first
+      const targets = GameRules.getAttackTargets(state, unit);
+      for (const target of targets) {
+        const damage = GameRules.calculateDamage(unit.type, unit.hp, target.type,
+                         state.map[target.row][target.col]);
+        const flank = GameRules.getFlankingBonus(state, unit, target);
+        const finalDmg = flank > 0 ? Math.max(1, Math.round(damage * (100 + flank) / 100)) : damage;
+        if (finalDmg >= target.hp) priority += 500;
+      }
+
+      // Ranged units go before melee (no counter = pure value)
+      if (UNIT_DEFS[unit.type].range > 1) priority += 100;
+
+      // Units adjacent to enemies go before distant ones
+      let minDist = Infinity;
+      for (const enemy of enemies) {
+        const d = hexDistance(unit.row, unit.col, enemy.row, enemy.col);
+        if (d < minDist) minDist = d;
+      }
+      if (minDist <= 1) priority += 80;
+      else if (minDist <= 2) priority += 40;
+
+      // Units with strong matchups nearby go earlier
+      for (const enemy of enemies) {
+        const d = hexDistance(unit.row, unit.col, enemy.row, enemy.col);
+        if (d <= UNIT_DEFS[unit.type].move + UNIT_DEFS[unit.type].range) {
+          if (DAMAGE_TABLE[unit.type][enemy.type] >= 70) priority += 30;
+        }
+      }
+
+      // Wounded units go last (may want to retreat after allies clear threats)
+      if (unit.hp <= 40) priority -= 50;
+
+      return { unit, priority };
+    });
+
+    scored.sort((a, b) => b.priority - a.priority);
+    return scored.map(s => s.unit);
+  }
+
+  /** Find the best action for a single unit. */
+  planUnitAction(state, unit, context) {
+    let bestAction = { unitId: unit.id, move: null, attackTargetId: null, attackBeforeMove: false };
+    let bestScore = -Infinity;
+
+    const candidates = this.generateCandidateActions(state, unit);
+    for (const candidate of candidates) {
+      const score = this.evaluateAction(state, unit, candidate, context);
+      if (score > bestScore) {
+        bestScore = score;
+        bestAction = candidate;
+      }
+    }
+    return bestAction;
+  }
+
+  /** Enumerate all legal action combinations for one unit. */
+  generateCandidateActions(state, unit) {
+    const candidates = [];
+
+    // Option A: Attack before move (fire from current position, then move)
+    if (!unit.attacked) {
+      const preTargets = GameRules.getAttackTargets(state, unit);
+      for (const target of preTargets) {
+        // Attack then stay
+        candidates.push({
+          unitId: unit.id, move: null,
+          attackTargetId: target.id, attackBeforeMove: true
+        });
+
+        // Attack then move somewhere
+        if (!unit.moved) {
+          const simState = GameState.deserialize(state.serialize());
+          GameRules.resolveAttack(simState, unit.id, target.id);
+          const simUnit = simState.getUnit(unit.id);
+          if (simUnit.hp > 0) {
+            const moveCells = GameRules.getMovableCells(simState, simUnit);
+            for (const cell of moveCells) {
+              if (cell.row === unit.row && cell.col === unit.col) continue;
+              candidates.push({
+                unitId: unit.id, move: cell,
+                attackTargetId: target.id, attackBeforeMove: true
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // Option B: Move then attack (or just move)
+    if (!unit.moved) {
+      const moveCells = GameRules.getMovableCells(state, unit);
+      for (const cell of moveCells) {
+        const isStay = (cell.row === unit.row && cell.col === unit.col);
+
+        if (!unit.attacked) {
+          // Simulate unit at new position, find attack targets
+          const simState = GameState.deserialize(state.serialize());
+          GameRules.moveUnit(simState, unit.id, cell.row, cell.col);
+          const simUnit = simState.getUnit(unit.id);
+          const postTargets = GameRules.getAttackTargets(simState, simUnit);
+
+          for (const target of postTargets) {
+            candidates.push({
+              unitId: unit.id,
+              move: isStay ? null : cell,
+              attackTargetId: target.id,
+              attackBeforeMove: false
+            });
+          }
+        }
+
+        // Move only (no attack)
+        if (!isStay) {
+          candidates.push({
+            unitId: unit.id, move: cell,
+            attackTargetId: null, attackBeforeMove: false
+          });
+        }
+      }
+    }
+
+    // Option C: Do nothing
+    candidates.push({
+      unitId: unit.id, move: null, attackTargetId: null, attackBeforeMove: false
+    });
+
+    return candidates;
+  }
+
+  /** Score an action. Higher = better. */
+  evaluateAction(state, unit, action, context) {
+    const sim = GameState.deserialize(state.serialize());
+    const simUnit = sim.getUnit(unit.id);
+    let score = 0;
+
+    // Execute the action in simulation
+    let combatResult = null;
+    if (action.attackBeforeMove && action.attackTargetId !== null) {
+      combatResult = GameRules.resolveAttack(sim, unit.id, action.attackTargetId);
+    }
+    if (action.move) {
+      GameRules.moveUnit(sim, unit.id, action.move.row, action.move.col);
+    }
+    if (!action.attackBeforeMove && action.attackTargetId !== null) {
+      combatResult = GameRules.resolveAttack(sim, unit.id, action.attackTargetId);
+    }
+
+    // ----- COMBAT SCORING -----
+    if (combatResult) {
+      const target = state.getUnit(action.attackTargetId);
+
+      // Raw damage dealt
+      score += combatResult.damage * 2;
+
+      // Kill bonus — removing a unit is extremely valuable
+      if (combatResult.defenderDestroyed) {
+        score += 300;
+        if (target.type === 'cavalry') score += 50;
+        if (target.type === 'archer') score += 40;
+      }
+
+      // Focus fire — prefer attacking already-wounded units
+      if (target.hp < 100) {
+        score += (100 - target.hp) * 1.5;
+      }
+
+      // Favorable matchup bonus
+      if (DAMAGE_TABLE[unit.type][target.type] >= 70) score += 30;
+
+      // Counter-attack penalty
+      score -= combatResult.counterDamage * 1.5;
+
+      // Self-destruction penalty
+      if (combatResult.attackerDestroyed) score -= 350;
+
+      // Net HP trade bonus
+      score += (combatResult.damage - combatResult.counterDamage) * 0.5;
+
+      // Hard mode: coordinated focus fire bonus
+      if (context && context.focusTargets.includes(action.attackTargetId)) {
+        score += 100;
+      }
+    }
+
+    // ----- POSITIONAL SCORING -----
+    const finalRow = action.move ? action.move.row : unit.row;
+    const finalCol = action.move ? action.move.col : unit.col;
+    const terrain = state.map[finalRow][finalCol];
+    const terrainDef = TERRAIN_DEFS[terrain].defense;
+    const enemyTeam = this.team === TEAM.BLUE ? TEAM.RED : TEAM.BLUE;
+    const enemies = sim.getLivingUnits(enemyTeam);
+
+    // ----- THREAT ASSESSMENT -----
+    if (context) {
+      // Hard mode: precise danger map
+      const dangerKey = `${finalRow},${finalCol}`;
+      const threats = context.dangerMap.get(dangerKey) || [];
+
+      // Terrain bonus scales with whether we're actually threatened
+      // No point camping a mountain nobody's attacking
+      score += terrainDef * (threats.length > 0 ? 1.5 : 0.3);
+
+      if (threats.length > 0) {
+        // Calculate actual incoming damage potential
+        let totalIncomingDmg = 0;
+        for (const enemy of threats) {
+          totalIncomingDmg += GameRules.calculateDamage(enemy.type, enemy.hp, unit.type, terrain);
+        }
+
+        score -= threats.length * 20;
+
+        // Can we be killed next turn? Huge penalty
+        if (simUnit.hp > 0 && totalIncomingDmg >= simUnit.hp) {
+          score -= 250;
+        }
+
+        // Wounded and exposed — scale penalty with actual danger
+        if (simUnit.hp > 0 && simUnit.hp <= 50) {
+          score -= totalIncomingDmg * 0.5;
+        }
+
+        // Archer safety — archers heavily penalized in threatened hexes
+        if (unit.type === 'archer') {
+          score -= threats.length * 25;
+        }
+      }
+    } else {
+      // Normal mode: terrain bonus + rough threat assessment
+      score += terrainDef * 1.5;
+      let threatsToUs = 0;
+      for (const enemy of enemies) {
+        const dist = hexDistance(finalRow, finalCol, enemy.row, enemy.col);
+        const enemyReach = UNIT_DEFS[enemy.type].move + UNIT_DEFS[enemy.type].range;
+        if (dist <= enemyReach) {
+          threatsToUs++;
+          if (simUnit.hp > 0 && simUnit.hp <= 40) score -= 40;
+        }
+      }
+      score -= threatsToUs * 15;
+    }
+
+    // Wounded unit retreat
+    if (simUnit.hp > 0 && simUnit.hp <= (context ? 50 : 40)) {
+      let minEnemyDist = Infinity;
+      for (const enemy of enemies) {
+        const d = hexDistance(finalRow, finalCol, enemy.row, enemy.col);
+        if (d < minEnemyDist) minEnemyDist = d;
+      }
+      score += minEnemyDist * (context ? 10 : 8);
+      score += terrainDef * 2;
+    }
+
+    // Advance toward enemies when healthy and no attack
+    if (!combatResult && simUnit.hp > 60) {
+      let minEnemyDist = Infinity;
+      for (const enemy of enemies) {
+        const d = hexDistance(finalRow, finalCol, enemy.row, enemy.col);
+        if (d < minEnemyDist) minEnemyDist = d;
+      }
+      score -= minEnemyDist * (context ? 5 : 3);
+    }
+
+    // Hard mode: frontline support — don't leave allies to fight alone
+    if (context && !combatResult && simUnit.hp > 50) {
+      const allies = sim.getLivingUnits(this.team).filter(u => u.id !== unit.id);
+      let minDistToFrontline = Infinity;
+      let hasFrontline = false;
+      for (const ally of allies) {
+        for (const enemy of enemies) {
+          if (hexDistance(ally.row, ally.col, enemy.row, enemy.col) <= 3) {
+            hasFrontline = true;
+            const d = hexDistance(finalRow, finalCol, ally.row, ally.col);
+            if (d < minDistToFrontline) minDistToFrontline = d;
+            break;
+          }
+        }
+      }
+      if (hasFrontline && minDistToFrontline > 2) {
+        score -= minDistToFrontline * 8;
+      }
+    }
+
+    // Flanking setup (melee units positioning near enemies)
+    if (!combatResult && UNIT_DEFS[unit.type].range === 1) {
+      for (const enemy of enemies) {
+        const dist = hexDistance(finalRow, finalCol, enemy.row, enemy.col);
+        if (dist === 1) {
+          // Adjacent to enemy — check if we enable flanking for allies
+          const allyNeighbors = hexNeighbors(enemy.row, enemy.col).filter(nb => {
+            const u = sim.getUnitAt(nb.row, nb.col);
+            return u && u.team === this.team && u.id !== unit.id;
+          });
+          if (allyNeighbors.length > 0) score += 25;
+
+          // Check backstab position
+          const dirs = HEX_DIRS[enemy.row & 1];
+          for (const ally of allyNeighbors) {
+            let allyDirIdx = -1;
+            for (let i = 0; i < 6; i++) {
+              if (enemy.row + dirs[i][0] === ally.row &&
+                  enemy.col + dirs[i][1] === ally.col) {
+                allyDirIdx = i;
+                break;
+              }
+            }
+            if (allyDirIdx !== -1) {
+              const oppIdx = (allyDirIdx + 3) % 6;
+              const oppR = enemy.row + dirs[oppIdx][0];
+              const oppC = enemy.col + dirs[oppIdx][1];
+              if (oppR === finalRow && oppC === finalCol) score += 35;
+            }
+          }
+        }
+      }
+    }
+
+    // Archer positioning — prefer range 2 (no counter)
+    if (unit.type === 'archer' && !combatResult) {
+      for (const enemy of enemies) {
+        const dist = hexDistance(finalRow, finalCol, enemy.row, enemy.col);
+        if (dist === 2) score += 15;
+        if (dist === 1) score -= (context ? 30 : 10);
+      }
+    }
+
+    return score;
+  }
+
+  /** Apply an action to a simulation state. */
+  applyAction(state, action) {
+    const unit = state.getUnit(action.unitId);
+    if (!unit || unit.hp <= 0) return;
+    if (action.attackBeforeMove && action.attackTargetId !== null) {
+      const target = state.getUnit(action.attackTargetId);
+      if (target && target.hp > 0) {
+        GameRules.resolveAttack(state, action.unitId, action.attackTargetId);
+        unit.attacked = true;
+      }
+    }
+    if (action.move && unit.hp > 0) {
+      GameRules.moveUnit(state, action.unitId, action.move.row, action.move.col);
+      unit.moved = true;
+    }
+    if (!action.attackBeforeMove && action.attackTargetId !== null && unit.hp > 0) {
+      const target = state.getUnit(action.attackTargetId);
+      if (target && target.hp > 0) {
+        GameRules.resolveAttack(state, action.unitId, action.attackTargetId);
+        unit.attacked = true;
+      }
+    }
   }
 }
 
@@ -882,15 +1497,57 @@ class CanvasRenderer {
 
 class GameController {
   constructor() {
-    this.state = this.createInitialState();
-    const canvas = document.getElementById('game');
-    this.renderer = new CanvasRenderer(canvas);
     this.turnInfoEl = document.getElementById('turn-info');
     this.endTurnBtn = document.getElementById('end-turn');
     this.infoPanel = document.getElementById('info-panel');
     this.hoverCell = null;
+    this.aiTeam = null;
+    this.aiPlayer = null;
+    this.aiTurnInProgress = false;
+    this.skipAiAnimation = false;
+    this.setupStartScreen();
+  }
 
-    // Size header/panel to match canvas
+  setupStartScreen() {
+    this.selectedDifficulty = 'normal';
+    document.getElementById('btn-vs-ai').addEventListener('click', () => {
+      document.querySelector('.start-buttons').style.display = 'none';
+      document.getElementById('team-pick').style.display = 'flex';
+    });
+    // Difficulty toggle
+    for (const btn of document.querySelectorAll('.diff-btn')) {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.diff-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        this.selectedDifficulty = btn.dataset.diff;
+      });
+    }
+    document.getElementById('pick-blue').addEventListener('click', () => this.startGame(TEAM.RED));
+    document.getElementById('pick-red').addEventListener('click', () => this.startGame(TEAM.BLUE));
+    document.getElementById('pick-back').addEventListener('click', () => {
+      document.getElementById('team-pick').style.display = 'none';
+      document.querySelector('.start-buttons').style.display = 'flex';
+    });
+    document.getElementById('btn-hotseat').addEventListener('click', () => this.startGame(null));
+    document.getElementById('btn-about').addEventListener('click', () => {
+      document.getElementById('about-overlay').style.display = 'flex';
+    });
+    document.getElementById('about-close').addEventListener('click', () => {
+      document.getElementById('about-overlay').style.display = 'none';
+    });
+  }
+
+  startGame(aiTeam) {
+    document.getElementById('start-screen').style.display = 'none';
+    document.getElementById('header').style.display = 'flex';
+    document.getElementById('game').style.display = 'block';
+    this.infoPanel.style.display = 'block';
+
+    this.aiTeam = aiTeam;
+    this.state = this.createInitialState();
+    const canvas = document.getElementById('game');
+    this.renderer = new CanvasRenderer(canvas);
+
     const w = canvas.width + 'px';
     document.getElementById('header').style.width = w;
     this.infoPanel.style.width = w;
@@ -903,8 +1560,35 @@ class GameController {
       helpBtn.textContent = open ? 'Help' : 'Hide Help';
     });
 
+    if (aiTeam) {
+      this.aiPlayer = new AIPlayer(aiTeam, this.selectedDifficulty || 'normal');
+    } else {
+      this.aiPlayer = null;
+    }
+
     this.bindInput();
     this.updateUI();
+
+    // If AI goes first (player chose Red), kick off AI turn
+    if (this.aiTeam === TEAM.BLUE) {
+      setTimeout(() => this.runAiTurn(), 500);
+    }
+  }
+
+  returnToStart() {
+    document.getElementById('start-screen').style.display = 'flex';
+    document.querySelector('.start-buttons').style.display = 'flex';
+    document.getElementById('team-pick').style.display = 'none';
+    document.getElementById('header').style.display = 'none';
+    document.getElementById('game').style.display = 'none';
+    this.infoPanel.style.display = 'none';
+    document.getElementById('help-panel').style.display = 'none';
+    document.getElementById('help-btn').textContent = 'Help';
+    this.endTurnBtn.textContent = 'End Turn';
+    this.endTurnBtn.disabled = false;
+    this.aiTeam = null;
+    this.aiPlayer = null;
+    this.aiTurnInProgress = false;
   }
 
   createInitialState() {
@@ -944,7 +1628,8 @@ class GameController {
   bindInput() {
     const canvas = this.renderer.canvas;
     canvas.addEventListener('click', (e) => {
-      if (this.state.winner) return;
+      if (this.state.winner || this.aiTurnInProgress) return;
+      if (this.aiTeam && this.state.currentTeam === this.aiTeam) return;
       const cell = this.renderer.getCellFromPixel(e.clientX, e.clientY);
       if (cell) this.handleClick(cell.row, cell.col);
     });
@@ -957,12 +1642,24 @@ class GameController {
       this.renderOnly();
     });
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') { this.cancelSelection(); this.updateUI(); }
+      if (e.key === 'Escape') {
+        if (this.aiTurnInProgress) {
+          this.skipAiAnimation = true;
+        } else {
+          this.cancelSelection();
+          this.updateUI();
+        }
+      }
+      if (e.key === ' ' && this.aiTurnInProgress) {
+        e.preventDefault();
+        this.skipAiAnimation = true;
+      }
     });
-    this.endTurnBtn.addEventListener('click', () => {
-      if (this.state.winner) return;
+    this.endTurnBtn.onclick = () => {
+      if (this.state.winner || this.aiTurnInProgress) return;
+      if (this.aiTeam && this.state.currentTeam === this.aiTeam) return;
       this.doEndTurn();
-    });
+    };
 
     // Long press for mobile tooltips
     let lpTimer = null;
@@ -1146,6 +1843,93 @@ class GameController {
     GameRules.endTurn(this.state);
     this.setInfo(`${TEAM_NAME[this.state.currentTeam]}'s turn. Select a unit.`);
     this.updateUI();
+
+    // Trigger AI turn if it's the AI's team
+    if (this.aiTeam && this.state.currentTeam === this.aiTeam && !this.state.winner) {
+      this.runAiTurn();
+    }
+  }
+
+  // -- AI Turn Execution --
+
+  async runAiTurn() {
+    if (!this.aiPlayer || this.state.currentTeam !== this.aiTeam) return;
+    this.aiTurnInProgress = true;
+    this.skipAiAnimation = false;
+    this.endTurnBtn.disabled = true;
+    this.setInfo(`${TEAM_NAME[this.aiTeam]} is thinking... (Space/Esc to skip)`);
+    this.updateUI();
+
+    const actions = this.aiPlayer.planTurn(this.state);
+
+    for (const action of actions) {
+      if (this.state.winner) break;
+      const unit = this.state.getUnit(action.unitId);
+      if (!unit || unit.hp <= 0) continue;
+
+      // Highlight the acting unit
+      this.state.selectedUnitId = action.unitId;
+      this.state.highlightedMoves = [];
+      this.state.highlightedAttacks = [];
+      this.updateUI();
+      await this.aiDelay(400);
+
+      // Pre-move attack
+      if (action.attackBeforeMove && action.attackTargetId !== null) {
+        const target = this.state.getUnit(action.attackTargetId);
+        if (target && target.hp > 0) {
+          this.state.highlightedAttacks = [action.attackTargetId];
+          this.updateUI();
+          await this.aiDelay(300);
+          this.performAttack(unit, target);
+          await this.aiDelay(500);
+        }
+      }
+
+      if (this.state.winner) break;
+
+      // Move
+      if (action.move && unit.hp > 0) {
+        this.state.highlightedMoves = [action.move];
+        this.updateUI();
+        await this.aiDelay(300);
+        GameRules.moveUnit(this.state, unit.id, action.move.row, action.move.col);
+        unit.moved = true;
+        this.cancelSelection();
+        this.state.selectedUnitId = action.unitId;
+        this.updateUI();
+        await this.aiDelay(300);
+      }
+
+      // Post-move attack
+      if (!action.attackBeforeMove && action.attackTargetId !== null && unit.hp > 0) {
+        const target = this.state.getUnit(action.attackTargetId);
+        if (target && target.hp > 0) {
+          this.state.highlightedAttacks = [action.attackTargetId];
+          this.updateUI();
+          await this.aiDelay(300);
+          this.performAttack(unit, target);
+          await this.aiDelay(500);
+        }
+      }
+
+      // Clear selection after this unit's action
+      this.cancelSelection();
+      this.updateUI();
+      await this.aiDelay(200);
+    }
+
+    // End AI turn
+    if (!this.state.winner) {
+      this.doEndTurn();
+    }
+    this.aiTurnInProgress = false;
+    this.endTurnBtn.disabled = !!this.state.winner;
+  }
+
+  aiDelay(ms) {
+    if (this.skipAiAnimation) return Promise.resolve();
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   // -- Helpers --
@@ -1229,11 +2013,16 @@ class GameController {
     const color = TEAM_COLOR[s.currentTeam];
     if (s.winner) {
       this.turnInfoEl.innerHTML = `<span style="color:${TEAM_COLOR[s.winner]}">${TEAM_NAME[s.winner]} Wins!</span>`;
-      this.endTurnBtn.disabled = true;
+      this.endTurnBtn.textContent = 'New Game';
+      this.endTurnBtn.disabled = false;
+      this.endTurnBtn.style.background = '#555';
+      this.endTurnBtn.style.color = '#fff';
+      this.endTurnBtn.onclick = () => this.returnToStart();
     } else {
       this.turnInfoEl.innerHTML = `Turn ${s.turnNumber} — <span style="color:${color}">${TEAM_NAME[s.currentTeam]}</span>`;
       this.endTurnBtn.style.background = color;
       this.endTurnBtn.style.color = '#fff';
+      this.endTurnBtn.disabled = this.aiTurnInProgress;
     }
     this.renderer.render(this.state, this.hoverCell, this.computeTooltip());
   }
