@@ -48,7 +48,7 @@ canvas { border: 2px solid #333; cursor: pointer; display: none; max-width: 100%
   line-height: 1.4;
   max-width: 100%;
 }
-#help-btn {
+#help-btn, #sound-btn {
   padding: 8px 16px;
   font-size: 14px;
   cursor: pointer;
@@ -59,7 +59,7 @@ canvas { border: 2px solid #333; cursor: pointer; display: none; max-width: 100%
   color: #fff;
   transition: opacity 0.2s;
 }
-#help-btn:hover { opacity: 0.85; }
+#help-btn:hover, #sound-btn:hover { opacity: 0.85; }
 #help-panel {
   margin-top: 10px;
   padding: 14px 18px;
@@ -227,6 +227,7 @@ canvas { border: 2px solid #333; cursor: pointer; display: none; max-width: 100%
 <div id="header">
   <span id="turn-info"></span>
   <div>
+    <button id="sound-btn" title="Toggle sound">Sound: On</button>
     <button id="help-btn">Help</button>
     <button id="end-turn">End Turn</button>
   </div>
@@ -237,9 +238,9 @@ canvas { border: 2px solid #333; cursor: pointer; display: none; max-width: 100%
   <h3>Units</h3>
   <table>
     <tr><th>Unit</th><th>HP</th><th>Move</th><th>Range</th></tr>
-    <tr><td>Swordsman (S)</td><td>100</td><td>3</td><td>1</td></tr>
+    <tr><td>Swordsman (S)</td><td>110</td><td>3</td><td>1</td></tr>
     <tr><td>Spearman (P)</td><td>100</td><td>3</td><td>1</td></tr>
-    <tr><td>Archer (A)</td><td>100</td><td>3</td><td>2</td></tr>
+    <tr><td>Archer (A)</td><td>80</td><td>3</td><td>2</td></tr>
     <tr><td>Cavalry (C)</td><td>100</td><td>4</td><td>1</td></tr>
   </table>
   <h3>Damage (attacker vs defender) — bold = strong matchup</h3>
@@ -286,9 +287,9 @@ const TEAM_NAME  = { [TEAM.BLUE]: 'Blue', [TEAM.RED]: 'Red' };
 const TEAM_COLOR = { [TEAM.BLUE]: '#4488ff', [TEAM.RED]: '#ff4444' };
 
 const UNIT_DEFS = {
-  swordsman: { name: 'Swordsman', hp: 100, move: 3, range: 1 },
+  swordsman: { name: 'Swordsman', hp: 110, move: 3, range: 1 },
   spearman:  { name: 'Spearman',  hp: 100, move: 3, range: 1 },
-  archer:    { name: 'Archer',    hp: 100, move: 3, range: 2 },
+  archer:    { name: 'Archer',    hp: 80,  move: 3, range: 2 },
   cavalry:   { name: 'Cavalry',   hp: 100, move: 4, range: 1 },
 };
 
@@ -1489,6 +1490,126 @@ class CanvasRenderer {
 }
 
 // ============================================================
+//  SOUND MANAGER — Synthesized sound effects via Web Audio API.
+//  No external files needed. Call play methods from Controller.
+// ============================================================
+
+class SoundManager {
+  constructor() {
+    this.ctx = null; // AudioContext created on first user interaction
+    this.muted = false;
+  }
+
+  init() {
+    if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (this.ctx.state === 'suspended') this.ctx.resume();
+  }
+
+  // -- Utility helpers --
+
+  noise(duration, filter, freq, q, gain, type = 'bandpass') {
+    if (!this.ctx || this.muted) return;
+    const sr = this.ctx.sampleRate;
+    const len = sr * duration;
+    const buf = this.ctx.createBuffer(1, len, sr);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+
+    const filt = this.ctx.createBiquadFilter();
+    filt.type = type;
+    filt.frequency.value = freq;
+    filt.Q.value = q;
+
+    const vol = this.ctx.createGain();
+    vol.gain.setValueAtTime(gain, this.ctx.currentTime);
+    vol.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration);
+
+    src.connect(filt).connect(vol).connect(this.ctx.destination);
+    src.start();
+    src.stop(this.ctx.currentTime + duration);
+  }
+
+  tone(freq, duration, gain, waveType = 'sine') {
+    if (!this.ctx || this.muted) return;
+    const osc = this.ctx.createOscillator();
+    osc.type = waveType;
+    osc.frequency.value = freq;
+
+    const vol = this.ctx.createGain();
+    vol.gain.setValueAtTime(gain, this.ctx.currentTime);
+    vol.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration);
+
+    osc.connect(vol).connect(this.ctx.destination);
+    osc.start();
+    osc.stop(this.ctx.currentTime + duration);
+  }
+
+  // -- Sound effects --
+
+  playAttack(attackerType) {
+    this.init();
+    if (attackerType === 'swordsman' || attackerType === 'cavalry') {
+      // Metallic clang
+      this.noise(0.15, 'bandpass', 3200, 5, 0.35);
+      this.noise(0.08, 'highpass', 5000, 3, 0.15);
+      this.tone(800, 0.06, 0.12, 'square');
+    } else {
+      // Stab/pierce for spearman and archer
+      this.noise(0.1, 'highpass', 4000, 2, 0.3);
+      this.tone(1200, 0.04, 0.1, 'sawtooth');
+    }
+  }
+
+  playCounter(attackerType) {
+    this.init();
+    // Counter-attack: similar but higher-pitched and quieter
+    if (attackerType === 'swordsman' || attackerType === 'cavalry') {
+      this.noise(0.12, 'bandpass', 4000, 5, 0.25);
+      this.tone(1000, 0.05, 0.08, 'square');
+    } else {
+      this.noise(0.08, 'highpass', 5000, 2, 0.2);
+      this.tone(1500, 0.03, 0.07, 'sawtooth');
+    }
+  }
+
+  playMove(unitType) {
+    this.init();
+    if (unitType === 'cavalry') {
+      // Gallop: quick succession of thuds
+      const t = this.ctx.currentTime;
+      for (let i = 0; i < 3; i++) {
+        const osc = this.ctx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.value = 90 + (i % 2) * 20;
+        const vol = this.ctx.createGain();
+        vol.gain.setValueAtTime(0, t + i * 0.08);
+        vol.gain.linearRampToValueAtTime(0.2, t + i * 0.08 + 0.01);
+        vol.gain.exponentialRampToValueAtTime(0.001, t + i * 0.08 + 0.07);
+        osc.connect(vol).connect(this.ctx.destination);
+        osc.start(t + i * 0.08);
+        osc.stop(t + i * 0.08 + 0.07);
+      }
+      this.noise(0.25, 'lowpass', 300, 1, 0.1, 'lowpass');
+    } else {
+      // Footstep: single soft thud
+      this.tone(100, 0.1, 0.15, 'sine');
+      this.noise(0.08, 'lowpass', 400, 1, 0.08, 'lowpass');
+    }
+  }
+
+  playDestroy() {
+    this.init();
+    // Low crumble/collapse
+    this.noise(0.3, 'lowpass', 600, 2, 0.3, 'lowpass');
+    this.tone(200, 0.15, 0.15, 'sawtooth');
+    this.tone(100, 0.3, 0.1, 'sine');
+  }
+}
+
+// ============================================================
 //  GAME CONTROLLER — Wires input, rules, state, and renderer.
 //  To add AI: check currentTeam before waiting for clicks.
 //  To add networking: sync state after each action.
@@ -1505,6 +1626,7 @@ class GameController {
     this.aiPlayer = null;
     this.aiTurnInProgress = false;
     this.skipAiAnimation = false;
+    this.sound = new SoundManager();
     this.setupStartScreen();
   }
 
@@ -1558,6 +1680,11 @@ class GameController {
       const open = helpPanel.style.display !== 'none';
       helpPanel.style.display = open ? 'none' : 'block';
       helpBtn.textContent = open ? 'Help' : 'Hide Help';
+    });
+    const soundBtn = document.getElementById('sound-btn');
+    soundBtn.addEventListener('click', () => {
+      this.sound.muted = !this.sound.muted;
+      soundBtn.textContent = this.sound.muted ? 'Sound: Off' : 'Sound: On';
     });
 
     if (aiTeam) {
@@ -1759,6 +1886,7 @@ class GameController {
 
     // Valid move destination
     if (s.highlightedMoves.some(c => c.row === row && c.col === col)) {
+      this.sound.playMove(unit.type);
       GameRules.moveUnit(s, unit.id, row, col);
       unit.moved = true;
       const name = UNIT_DEFS[unit.type].name;
@@ -1807,6 +1935,16 @@ class GameController {
   performAttack(attacker, target) {
     const s = this.state;
     const result = GameRules.resolveAttack(s, attacker.id, target.id);
+
+    // Sound effects
+    this.sound.playAttack(attacker.type);
+    if (result.counterDamage > 0) {
+      setTimeout(() => this.sound.playCounter(target.type), 120);
+    }
+    if (result.defenderDestroyed || result.attackerDestroyed) {
+      setTimeout(() => this.sound.playDestroy(), 150);
+    }
+
     const flankLabel = result.flankBonus === FLANKING.BACKSTAB ? 'backstab' : 'flanking';
     let msg = `${TEAM_NAME[attacker.team]} ${UNIT_DEFS[attacker.type].name} deals ${result.damage} dmg`;
     if (result.flankBonus > 0) msg += ` [${flankLabel} +${result.flankBonus}%]`;
@@ -1893,6 +2031,7 @@ class GameController {
         this.state.highlightedMoves = [action.move];
         this.updateUI();
         await this.aiDelay(300);
+        this.sound.playMove(unit.type);
         GameRules.moveUnit(this.state, unit.id, action.move.row, action.move.col);
         unit.moved = true;
         this.cancelSelection();

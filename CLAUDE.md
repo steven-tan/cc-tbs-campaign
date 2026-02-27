@@ -4,7 +4,7 @@ Fantasy-themed turn-based tactical combat game (originally Advance Wars-inspired
 
 ## Architecture
 
-The code is organized into five cleanly separated layers in `index.html`:
+The code is organized into six cleanly separated layers in `index.html`:
 
 | Layer | Class | Role |
 |---|---|---|
@@ -12,7 +12,8 @@ The code is organized into five cleanly separated layers in `index.html`:
 | **Logic** | `GameRules` | Static pure functions — movement (BFS), combat (attack + counter), win check. No DOM, no side effects. |
 | **AI** | `AIPlayer` | Greedy positional AI. Pure logic — reads state via GameRules, returns action list. No DOM. |
 | **Rendering** | `CanvasRenderer` | Reads GameState, draws to canvas. Swappable — just implement `render(state)` and `getCellFromPixel(x,y)`. |
-| **Orchestration** | `GameController` | Wires input → rules → state → renderer. Manages start screen, game modes, AI turn execution. |
+| **Audio** | `SoundManager` | Synthesized sound effects via Web Audio API. No external files. |
+| **Orchestration** | `GameController` | Wires input → rules → state → renderer → sound. Manages start screen, game modes, AI turn execution. |
 
 **Key design rule:** GameState, GameRules, and AIPlayer have zero DOM dependencies. All browser interaction goes through Renderer and Controller.
 
@@ -27,14 +28,14 @@ The code is organized into five cleanly separated layers in `index.html`:
 ## Current Game State
 
 - 9x9 hex grid (pointy-top, odd-r offset coordinates), four terrain types (plains, mountains, forest, water)
-- Four unit types: Swordsman (move 3, range 1), Spearman (move 3, range 1), Archer (move 3, range 2), Cavalry (move 4, range 1), 7 per side
+- Four unit types: Swordsman (110 HP, move 3, range 1), Spearman (100 HP, move 3, range 1), Archer (80 HP, move 3, range 2), Cavalry (100 HP, move 4, range 1), 7 per side
 - Units rendered as team-colored canvas-path icons (sword, spear+helm, hooded archer+bow, rider on horse) — no circles, icons fill hex space
 - Selected unit shown with golden hex border; spent units dimmed via opacity
 - Hotseat two-player (Blue/Red) or vs AI, click to select/move/attack
 - Units can fire before moving, move then attack, or just do one
 - After moving, attack targets auto-highlight if enemies are in range
 - Combat has range-gated counter-attacks, damage scales with HP (floors at ~50%)
-- HP displayed as actual values (0-100)
+- HP displayed as actual values; units have different max HP (swordsman 110, archer 80, others 100)
 - Mountains: +30% defense, 3 move cost for swordsmen/spearmen/archers, impassable for cavalry
 - Forest: +30% defense, 2 move cost for all units
 - Water: impassable for all units
@@ -42,6 +43,7 @@ The code is organized into five cleanly separated layers in `index.html`:
 - Mobile long press (~400ms) shows same tooltips as desktop hover
 - Click selected unit to deselect in any phase
 - Toggleable help panel with unit stats, damage table, terrain modifiers, flanking, combat notes
+- Sound effects: synthesized via Web Audio API (attack clang/pierce, counter-attack, movement footstep/gallop, unit destroy). Mute toggle in header.
 
 ## AI Player
 
