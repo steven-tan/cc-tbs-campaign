@@ -20,15 +20,34 @@ The code is organized into six cleanly separated layers in `index.html`:
 ## Game Modes
 
 - **Start screen** on load: [Play vs AI] [2P Hotseat] [About]
-- Play vs AI → player chooses Blue or Red → AI controls the other team
-- 2P Hotseat → same as before (local two-player)
+- Play vs AI → map size + difficulty + team pick → AI controls the other team
+- 2P Hotseat → map size pick → start game
 - About → game overview overlay, points to in-game Help for detailed stats
 - Game-over shows "New Game" button → returns to start screen
 
+## Map Sizes & Terrain Generation
+
+Three map sizes, selectable in the setup flow after choosing game mode:
+
+| Size | Grid | Units/Side | Composition |
+|------|------|------------|-------------|
+| Small | 7×7 | 5 | 1 cav, 2 sword, 1 spear, 1 archer |
+| Medium | 9×9 | 7 | 2 cav, 2 sword, 1 spear, 2 archer |
+| Large | 9×13 | 8 | 2 cav, 2 sword, 2 spear, 2 archer |
+
+- `MAP_SIZES` config at top of file defines grid dimensions and unit lists per size
+- `ROWS`/`COLS` are `let` variables, set from `MAP_SIZES` each game; `CANVAS_W`/`CANVAS_H` recalculated via `recalcCanvasDims()`
+- **Terrain generation:** `generateMap(rows, cols)` creates random maps with vertical symmetry (top mirrors to bottom for fairness)
+- Spawn rows (0 and last) always plains; terrain budgets scale with map size (~25% non-plains)
+- Mountains ~10%, forests ~14%, water ~4% of inner cells; water restricted to central rows
+- Middle row (odd grids) gets independent terrain scatter
+- `mapIsConnected()` BFS validates infantry can path from top to bottom; regenerates if blocked
+- `generateUnits(preset, rows, cols)` distributes units centered across home rows
+
 ## Current Game State
 
-- 9x9 hex grid (pointy-top, odd-r offset coordinates), four terrain types (plains, mountains, forest, water)
-- Four unit types: Swordsman (110 HP, move 3, range 1), Spearman (100 HP, move 3, range 1), Archer (80 HP, move 3, range 2), Cavalry (100 HP, move 4, range 1), 7 per side
+- Hex grid (pointy-top, odd-r offset coordinates), four terrain types (plains, mountains, forest, water)
+- Four unit types: Swordsman (110 HP, move 3, range 1), Spearman (100 HP, move 3, range 1), Archer (80 HP, move 3, range 2), Cavalry (100 HP, move 4, range 1)
 - Units rendered as team-colored canvas-path icons (sword, spear+helm, hooded archer+bow, rider on horse) — no circles, icons fill hex space
 - Selected unit shown with golden hex border; spent units dimmed via opacity
 - Hotseat two-player (Blue/Red) or vs AI, click to select/move/attack
@@ -101,5 +120,5 @@ Game balance lives in constants at the top of the file: `UNIT_DEFS`, `TERRAIN_DE
 - **Multiplayer (roadmap):** Lightweight 2-player online via shared link (no accounts/passwords). Two candidate approaches: Firebase Realtime DB (reliable, free tier, client-side SDK) or PeerJS/WebRTC (peer-to-peer, no external project). Room codes shared out-of-band (e.g. Discord). Deferred until after AI and core mechanics stabilize.
 - **AI difficulty tiers:** Current AI is tuned to be challenging. Difficulty levels can be added by adjusting scoring weights.
 - **New renderer:** Swap CanvasRenderer for WebGL/DOM/terminal
-- **Map generation:** Random terrain placement (logic layer, not rendering)
 - **More terrain/unit types:** Add entries to TERRAIN_DEFS, UNIT_DEFS, DAMAGE_TABLE (forest, water, cavalry already added)
+- **Army builder:** Point-based army composition as future alternative to pre-set compositions

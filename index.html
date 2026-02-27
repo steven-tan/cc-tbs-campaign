@@ -187,6 +187,7 @@ canvas { border: 2px solid #333; cursor: pointer; display: none; max-width: 100%
   background: #334;
 }
 .diff-btn:hover { opacity: 0.85; }
+.size-row { display: flex; gap: 10px; }
 </style>
 </head>
 <body>
@@ -199,15 +200,31 @@ canvas { border: 2px solid #333; cursor: pointer; display: none; max-width: 100%
     <button id="btn-about">About</button>
   </div>
   <div id="team-pick" style="display:none;">
-    <p>Difficulty:</p>
+    <p>Map Size:</p>
+    <div class="size-row">
+      <button class="diff-btn size-btn" data-size="small">Small</button>
+      <button class="diff-btn size-btn active" data-size="medium">Medium</button>
+      <button class="diff-btn size-btn" data-size="large">Large</button>
+    </div>
+    <p style="margin-top:12px;">Difficulty:</p>
     <div class="diff-row">
-      <button class="diff-btn active" data-diff="normal">Normal</button>
-      <button class="diff-btn" data-diff="hard">Hard</button>
+      <button class="diff-btn diff-opt active" data-diff="normal">Normal</button>
+      <button class="diff-btn diff-opt" data-diff="hard">Hard</button>
     </div>
     <p style="margin-top:16px;">Choose your side:</p>
     <button id="pick-blue" style="background:#4488ff;color:#fff;padding:12px 40px;font-size:18px;font-weight:bold;border:none;border-radius:6px;cursor:pointer;min-width:220px;">Play as Blue (go first)</button>
     <button id="pick-red" style="background:#ff4444;color:#fff;padding:12px 40px;font-size:18px;font-weight:bold;border:none;border-radius:6px;cursor:pointer;min-width:220px;">Play as Red</button>
     <button id="pick-back">Back</button>
+  </div>
+  <div id="hotseat-pick" style="display:none;">
+    <p>Map Size:</p>
+    <div class="size-row">
+      <button class="diff-btn hs-size-btn" data-size="small">Small</button>
+      <button class="diff-btn hs-size-btn active" data-size="medium">Medium</button>
+      <button class="diff-btn hs-size-btn" data-size="large">Large</button>
+    </div>
+    <button id="hs-start" style="margin-top:16px;background:#ff8844;color:#fff;padding:12px 40px;font-size:18px;font-weight:bold;border:none;border-radius:6px;cursor:pointer;min-width:220px;">Start Game</button>
+    <button id="hs-back">Back</button>
   </div>
 </div>
 <div id="about-overlay">
@@ -267,6 +284,8 @@ canvas { border: 2px solid #333; cursor: pointer; display: none; max-width: 100%
     <tr><td>Ally directly behind defender (backstab)</td><td>+25% attack</td></tr>
   </table>
   <p>Backstab overrides count-based bonuses (no further stacking). Counter-attacks do not receive flanking bonuses.</p>
+  <h3>Map sizes</h3>
+  <p>Small (7&times;7, 5 units/side) for quick skirmishes. Medium (9&times;9, 7 units/side) for strategic depth. Large (9&times;13, 8 units/side) for extended campaigns. Terrain is randomly generated each game with vertical symmetry for fairness.</p>
   <h3>Combat notes</h3>
   <p>Damaged units deal less damage (down to ~50% at very low HP). Defenders counter-attack if the attacker is within their range. Mountains and forests reduce incoming damage by 30%. Water is impassable. Cavalry cannot enter mountains. Swordsmen are strong vs spearmen. Spearmen and archers are strong vs cavalry. Cavalry is strong vs swordsmen and archers.</p>
 </div>
@@ -277,7 +296,13 @@ canvas { border: 2px solid #333; cursor: pointer; display: none; max-width: 100%
 //  Edit these to tune gameplay without touching logic.
 // ============================================================
 
-const COLS = 9, ROWS = 9;
+let COLS = 9, ROWS = 9;
+
+const MAP_SIZES = {
+  small:  { rows: 7, cols: 7, units: ['cavalry','swordsman','swordsman','spearman','archer'] },
+  medium: { rows: 9, cols: 9, units: ['cavalry','swordsman','spearman','archer','archer','swordsman','cavalry'] },
+  large:  { rows: 13, cols: 9, units: ['cavalry','swordsman','spearman','archer','archer','spearman','swordsman','cavalry'] },
+};
 
 const TERRAIN = { PLAINS: 'plains', MOUNTAINS: 'mountains', FOREST: 'forest', WATER: 'water' };
 const TEAM   = { BLUE: 1, RED: 2 };
@@ -378,9 +403,148 @@ function hexDistance(r1, c1, r2, c2) {
   return Math.max(Math.abs(x1 - x2), Math.abs(y1 - y2), Math.abs(z1 - z2));
 }
 
-// Canvas dimensions to fit the hex grid exactly
-const CANVAS_W = Math.ceil(HEX_W * (COLS + 0.5));
-const CANVAS_H = Math.ceil(HEX_SIZE * (1.5 * ROWS + 0.5));
+// Canvas dimensions to fit the hex grid exactly (recalculated per game)
+let CANVAS_W = Math.ceil(HEX_W * (COLS + 0.5));
+let CANVAS_H = Math.ceil(HEX_SIZE * (1.5 * ROWS + 0.5));
+
+function recalcCanvasDims() {
+  CANVAS_W = Math.ceil(HEX_W * (COLS + 0.5));
+  CANVAS_H = Math.ceil(HEX_SIZE * (1.5 * ROWS + 0.5));
+}
+
+// ============================================================
+//  MAP & UNIT GENERATION — Procedural, symmetric, balanced.
+// ============================================================
+
+/** Generate a random terrain map with vertical symmetry for fairness. */
+function generateMap(rows, cols) {
+  const P = TERRAIN.PLAINS, M = TERRAIN.MOUNTAINS, F = TERRAIN.FOREST, W = TERRAIN.WATER;
+  // Start with all plains
+  const map = Array.from({ length: rows }, () => Array(cols).fill(P));
+
+  const midRow = Math.floor(rows / 2);
+  const innerCells = (midRow - 1) * cols; // cells in the top half (excluding spawn row)
+
+  // Terrain budgets (approximate cell counts for the top half; mirrored to bottom)
+  const mtnCount = Math.max(2, Math.round(innerCells * 0.10));
+  const forestCount = Math.max(2, Math.round(innerCells * 0.14));
+  const waterCount = Math.max(1, Math.round(innerCells * 0.04));
+
+  // Collect eligible cells for placement (rows 1 through midRow-1 = top half, excluding spawn)
+  const topCells = [];
+  for (let r = 1; r < midRow; r++) {
+    for (let c = 0; c < cols; c++) {
+      topCells.push({ r, c });
+    }
+  }
+  // Shuffle
+  for (let i = topCells.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [topCells[i], topCells[j]] = [topCells[j], topCells[i]];
+  }
+
+  // Place terrain from the shuffled pool, mirroring to the bottom half
+  let placed = 0;
+  const placeType = (type, count) => {
+    let n = 0;
+    while (n < count && placed < topCells.length) {
+      const { r, c } = topCells[placed++];
+      if (map[r][c] !== P) continue; // skip if already claimed
+      map[r][c] = type;
+      map[rows - 1 - r][c] = type; // mirror
+      n++;
+    }
+  };
+
+  placeType(M, mtnCount);
+  placeType(F, forestCount);
+  // Water restricted to rows 2..(rows-3) to avoid blocking near spawns
+  const waterCells = [];
+  for (let i = placed; i < topCells.length; i++) {
+    if (topCells[i].r >= 2) waterCells.push(topCells[i]);
+  }
+  for (let i = waterCells.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [waterCells[i], waterCells[j]] = [waterCells[j], waterCells[i]];
+  }
+  let wn = 0;
+  for (const { r, c } of waterCells) {
+    if (wn >= waterCount) break;
+    if (map[r][c] !== P) continue;
+    map[r][c] = W;
+    map[rows - 1 - r][c] = W;
+    wn++;
+  }
+
+  // Middle row (odd-row grids): scatter some terrain independently
+  if (rows % 2 === 1) {
+    const mr = midRow;
+    const midBudget = Math.max(1, Math.round(cols * 0.25));
+    const midIndices = Array.from({ length: cols }, (_, i) => i);
+    for (let i = midIndices.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [midIndices[i], midIndices[j]] = [midIndices[j], midIndices[i]];
+    }
+    let mp = 0;
+    for (const c of midIndices) {
+      if (mp >= midBudget) break;
+      const pick = Math.random();
+      if (pick < 0.4) { map[mr][c] = F; mp++; }
+      else if (pick < 0.6) { map[mr][c] = M; mp++; }
+      else if (pick < 0.7) { map[mr][c] = W; mp++; }
+    }
+  }
+
+  // Connectivity check: BFS from any top-row cell to any bottom-row cell
+  // using infantry movement (worst-case excluding cavalry which can't do mountains)
+  if (!mapIsConnected(map, rows, cols)) return generateMap(rows, cols);
+
+  return map;
+}
+
+/** BFS connectivity check: can infantry reach from row 0 to row (rows-1)? */
+function mapIsConnected(map, rows, cols) {
+  const visited = Array.from({ length: rows }, () => Array(cols).fill(false));
+  const queue = [];
+  // Seed from all traversable cells in row 0
+  for (let c = 0; c < cols; c++) {
+    const t = map[0][c];
+    if (TERRAIN_DEFS[t].moveCost.swordsman < Infinity) {
+      visited[0][c] = true;
+      queue.push([0, c]);
+    }
+  }
+  let head = 0;
+  while (head < queue.length) {
+    const [r, c] = queue[head++];
+    if (r === rows - 1) return true;
+    const dirs = HEX_DIRS[r & 1];
+    for (const [dr, dc] of dirs) {
+      const nr = r + dr, nc = c + dc;
+      if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;
+      if (visited[nr][nc]) continue;
+      if (TERRAIN_DEFS[map[nr][nc]].moveCost.swordsman >= Infinity) continue;
+      visited[nr][nc] = true;
+      queue.push([nr, nc]);
+    }
+  }
+  return false;
+}
+
+/** Build unit arrays for both teams given a MAP_SIZES preset. */
+function generateUnits(preset, rows, cols) {
+  const types = preset.units;
+  const count = types.length;
+  // Spread units across home row, centered
+  const startCol = Math.floor((cols - count) / 2);
+  const units = [];
+  for (let i = 0; i < count; i++) {
+    const c = startCol + i;
+    units.push({ type: types[i], team: TEAM.BLUE, row: rows - 1, col: c });
+    units.push({ type: types[i], team: TEAM.RED,  row: 0,        col: c });
+  }
+  return units;
+}
 
 // ============================================================
 //  GAME STATE — Pure data container, fully serializable.
@@ -1626,56 +1790,17 @@ class GameController {
     this.aiPlayer = null;
     this.aiTurnInProgress = false;
     this.skipAiAnimation = false;
+    this._gameId = 0;             // incremented each game to invalidate stale AI timeouts
+    this._boundListeners = null;   // stored for cleanup between games
     this.sound = new SoundManager();
     this.setupStartScreen();
+    this._setupPermanentButtons();
   }
 
-  setupStartScreen() {
-    this.selectedDifficulty = 'normal';
-    document.getElementById('btn-vs-ai').addEventListener('click', () => {
-      document.querySelector('.start-buttons').style.display = 'none';
-      document.getElementById('team-pick').style.display = 'flex';
-    });
-    // Difficulty toggle
-    for (const btn of document.querySelectorAll('.diff-btn')) {
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('.diff-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        this.selectedDifficulty = btn.dataset.diff;
-      });
-    }
-    document.getElementById('pick-blue').addEventListener('click', () => this.startGame(TEAM.RED));
-    document.getElementById('pick-red').addEventListener('click', () => this.startGame(TEAM.BLUE));
-    document.getElementById('pick-back').addEventListener('click', () => {
-      document.getElementById('team-pick').style.display = 'none';
-      document.querySelector('.start-buttons').style.display = 'flex';
-    });
-    document.getElementById('btn-hotseat').addEventListener('click', () => this.startGame(null));
-    document.getElementById('btn-about').addEventListener('click', () => {
-      document.getElementById('about-overlay').style.display = 'flex';
-    });
-    document.getElementById('about-close').addEventListener('click', () => {
-      document.getElementById('about-overlay').style.display = 'none';
-    });
-  }
-
-  startGame(aiTeam) {
-    document.getElementById('start-screen').style.display = 'none';
-    document.getElementById('header').style.display = 'flex';
-    document.getElementById('game').style.display = 'block';
-    this.infoPanel.style.display = 'block';
-
-    this.aiTeam = aiTeam;
-    this.state = this.createInitialState();
-    const canvas = document.getElementById('game');
-    this.renderer = new CanvasRenderer(canvas);
-
-    const w = canvas.width + 'px';
-    document.getElementById('header').style.width = w;
-    this.infoPanel.style.width = w;
-    const helpPanel = document.getElementById('help-panel');
-    helpPanel.style.width = w;
+  /** Help and sound buttons — attach once, never duplicated. */
+  _setupPermanentButtons() {
     const helpBtn = document.getElementById('help-btn');
+    const helpPanel = document.getElementById('help-panel');
     helpBtn.addEventListener('click', () => {
       const open = helpPanel.style.display !== 'none';
       helpPanel.style.display = open ? 'none' : 'block';
@@ -1686,6 +1811,97 @@ class GameController {
       this.sound.muted = !this.sound.muted;
       soundBtn.textContent = this.sound.muted ? 'Sound: Off' : 'Sound: On';
     });
+  }
+
+  setupStartScreen() {
+    this.selectedDifficulty = 'normal';
+    this.selectedMapSize = 'medium';
+
+    // --- Play vs AI ---
+    document.getElementById('btn-vs-ai').addEventListener('click', () => {
+      document.querySelector('.start-buttons').style.display = 'none';
+      document.getElementById('team-pick').style.display = 'flex';
+    });
+    // Map size toggle (AI)
+    for (const btn of document.querySelectorAll('.size-btn')) {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.size-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        this.selectedMapSize = btn.dataset.size;
+      });
+    }
+    // Difficulty toggle
+    for (const btn of document.querySelectorAll('.diff-opt')) {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.diff-opt').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        this.selectedDifficulty = btn.dataset.diff;
+      });
+    }
+    document.getElementById('pick-blue').addEventListener('click', () => this.startGame(TEAM.RED));
+    document.getElementById('pick-red').addEventListener('click', () => this.startGame(TEAM.BLUE));
+    document.getElementById('pick-back').addEventListener('click', () => {
+      document.getElementById('team-pick').style.display = 'none';
+      document.querySelector('.start-buttons').style.display = 'flex';
+    });
+
+    // --- 2P Hotseat ---
+    document.getElementById('btn-hotseat').addEventListener('click', () => {
+      document.querySelector('.start-buttons').style.display = 'none';
+      document.getElementById('hotseat-pick').style.display = 'flex';
+    });
+    // Map size toggle (Hotseat)
+    for (const btn of document.querySelectorAll('.hs-size-btn')) {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.hs-size-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        this.selectedMapSize = btn.dataset.size;
+      });
+    }
+    document.getElementById('hs-start').addEventListener('click', () => this.startGame(null));
+    document.getElementById('hs-back').addEventListener('click', () => {
+      document.getElementById('hotseat-pick').style.display = 'none';
+      document.querySelector('.start-buttons').style.display = 'flex';
+    });
+
+    // --- About ---
+    document.getElementById('btn-about').addEventListener('click', () => {
+      document.getElementById('about-overlay').style.display = 'flex';
+    });
+    document.getElementById('about-close').addEventListener('click', () => {
+      document.getElementById('about-overlay').style.display = 'none';
+    });
+  }
+
+  startGame(aiTeam) {
+    // Invalidate any stale AI timeouts from previous game
+    this._gameId++;
+    this.cleanupInput();
+
+    document.getElementById('start-screen').style.display = 'none';
+    document.getElementById('header').style.display = 'flex';
+    document.getElementById('game').style.display = 'block';
+    this.infoPanel.style.display = 'block';
+
+    // Set grid dimensions from selected map size
+    const sizeKey = this.selectedMapSize || 'medium';
+    const preset = MAP_SIZES[sizeKey];
+    ROWS = preset.rows;
+    COLS = preset.cols;
+    recalcCanvasDims();
+
+    this.aiTeam = aiTeam;
+    this.aiTurnInProgress = false;
+    this.skipAiAnimation = false;
+    this.hoverCell = null;
+    this.state = this.createInitialState(preset);
+    const canvas = document.getElementById('game');
+    this.renderer = new CanvasRenderer(canvas);
+
+    const w = canvas.width + 'px';
+    document.getElementById('header').style.width = w;
+    this.infoPanel.style.width = w;
+    document.getElementById('help-panel').style.width = w;
 
     if (aiTeam) {
       this.aiPlayer = new AIPlayer(aiTeam, this.selectedDifficulty || 'normal');
@@ -1703,9 +1919,14 @@ class GameController {
   }
 
   returnToStart() {
+    // Invalidate stale AI timeouts and remove event listeners
+    this._gameId++;
+    this.cleanupInput();
+
     document.getElementById('start-screen').style.display = 'flex';
     document.querySelector('.start-buttons').style.display = 'flex';
     document.getElementById('team-pick').style.display = 'none';
+    document.getElementById('hotseat-pick').style.display = 'none';
     document.getElementById('header').style.display = 'none';
     document.getElementById('game').style.display = 'none';
     this.infoPanel.style.display = 'none';
@@ -1716,107 +1937,111 @@ class GameController {
     this.aiTeam = null;
     this.aiPlayer = null;
     this.aiTurnInProgress = false;
+    this.skipAiAnimation = false;
+    this.hoverCell = null;
+    this.state = null;
+    this.renderer = null;
   }
 
-  createInitialState() {
-    const P = TERRAIN.PLAINS, M = TERRAIN.MOUNTAINS, F = TERRAIN.FOREST, W = TERRAIN.WATER;
-    const map = [
-      [P, P, P, P, P, P, P, P, P],
-      [P, P, M, P, F, F, P, M, P],
-      [P, P, M, P, P, F, P, P, P],
-      [F, F, P, P, P, P, P, F, F],
-      [P, P, P, W, W, P, P, P, P],
-      [F, F, P, P, P, P, P, F, F],
-      [P, P, P, F, P, P, M, P, P],
-      [P, M, P, F, F, P, M, P, P],
-      [P, P, P, P, P, P, P, P, P],
-    ];
-    const units = [
-      { type: 'cavalry',   team: TEAM.BLUE, row: 8, col: 0 },
-      { type: 'swordsman', team: TEAM.BLUE, row: 8, col: 1 },
-      { type: 'spearman',  team: TEAM.BLUE, row: 8, col: 3 },
-      { type: 'archer',    team: TEAM.BLUE, row: 8, col: 4 },
-      { type: 'archer',    team: TEAM.BLUE, row: 8, col: 5 },
-      { type: 'swordsman', team: TEAM.BLUE, row: 8, col: 7 },
-      { type: 'cavalry',   team: TEAM.BLUE, row: 8, col: 8 },
-      { type: 'cavalry',   team: TEAM.RED,  row: 0, col: 0 },
-      { type: 'swordsman', team: TEAM.RED,  row: 0, col: 1 },
-      { type: 'archer',    team: TEAM.RED,  row: 0, col: 3 },
-      { type: 'archer',    team: TEAM.RED,  row: 0, col: 4 },
-      { type: 'spearman',  team: TEAM.RED,  row: 0, col: 6 },
-      { type: 'swordsman', team: TEAM.RED,  row: 0, col: 7 },
-      { type: 'cavalry',   team: TEAM.RED,  row: 0, col: 8 },
-    ];
+  createInitialState(preset) {
+    const map = generateMap(ROWS, COLS);
+    const units = generateUnits(preset, ROWS, COLS);
     return GameState.createInitial(map, units);
   }
 
   // -- Input binding (swap this section for AI/network input) --
 
+  /** Remove all game-session event listeners. Safe to call even if none are bound. */
+  cleanupInput() {
+    if (!this._boundListeners) return;
+    const b = this._boundListeners;
+    b.canvas.removeEventListener('click', b.onClick);
+    b.canvas.removeEventListener('mousemove', b.onMouseMove);
+    b.canvas.removeEventListener('mouseleave', b.onMouseLeave);
+    b.canvas.removeEventListener('touchstart', b.onTouchStart);
+    b.canvas.removeEventListener('touchmove', b.onTouchMove);
+    b.canvas.removeEventListener('touchend', b.onTouchEnd);
+    document.removeEventListener('keydown', b.onKeyDown);
+    this.endTurnBtn.onclick = null;
+    this._boundListeners = null;
+  }
+
   bindInput() {
     const canvas = this.renderer.canvas;
-    canvas.addEventListener('click', (e) => {
-      if (this.state.winner || this.aiTurnInProgress) return;
-      if (this.aiTeam && this.state.currentTeam === this.aiTeam) return;
-      const cell = this.renderer.getCellFromPixel(e.clientX, e.clientY);
-      if (cell) this.handleClick(cell.row, cell.col);
-    });
-    canvas.addEventListener('mousemove', (e) => {
-      this.hoverCell = this.renderer.getCellFromPixel(e.clientX, e.clientY);
-      this.renderOnly();
-    });
-    canvas.addEventListener('mouseleave', () => {
-      this.hoverCell = null;
-      this.renderOnly();
-    });
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
-        if (this.aiTurnInProgress) {
-          this.skipAiAnimation = true;
-        } else {
-          this.cancelSelection();
-          this.updateUI();
+    let lpTimer = null;
+    let lpFired = false;
+
+    const b = {
+      canvas,
+      onClick: (e) => {
+        if (this.state.winner || this.aiTurnInProgress) return;
+        if (this.aiTeam && this.state.currentTeam === this.aiTeam) return;
+        const cell = this.renderer.getCellFromPixel(e.clientX, e.clientY);
+        if (cell) this.handleClick(cell.row, cell.col);
+      },
+      onMouseMove: (e) => {
+        this.hoverCell = this.renderer.getCellFromPixel(e.clientX, e.clientY);
+        this.renderOnly();
+      },
+      onMouseLeave: () => {
+        this.hoverCell = null;
+        this.renderOnly();
+      },
+      onKeyDown: (e) => {
+        if (e.key === 'Escape') {
+          if (this.aiTurnInProgress) {
+            this.skipAiAnimation = true;
+          } else {
+            this.cancelSelection();
+            this.updateUI();
+          }
         }
-      }
-      if (e.key === ' ' && this.aiTurnInProgress) {
-        e.preventDefault();
-        this.skipAiAnimation = true;
-      }
-    });
+        if (e.key === ' ' && this.aiTurnInProgress) {
+          e.preventDefault();
+          this.skipAiAnimation = true;
+        }
+      },
+      onTouchStart: (e) => {
+        if (e.touches.length !== 1) return;
+        lpFired = false;
+        const touch = e.touches[0];
+        const cell = this.renderer.getCellFromPixel(touch.clientX, touch.clientY);
+        lpTimer = setTimeout(() => {
+          if (cell) {
+            this.hoverCell = cell;
+            lpFired = true;
+            this.renderOnly();
+          }
+        }, 400);
+      },
+      onTouchMove: () => {
+        clearTimeout(lpTimer);
+        if (lpFired) { lpFired = false; this.hoverCell = null; this.renderOnly(); }
+      },
+      onTouchEnd: (e) => {
+        clearTimeout(lpTimer);
+        if (lpFired) {
+          lpFired = false;
+          this.hoverCell = null;
+          this.renderOnly();
+          e.preventDefault();
+        }
+      },
+    };
+
+    canvas.addEventListener('click', b.onClick);
+    canvas.addEventListener('mousemove', b.onMouseMove);
+    canvas.addEventListener('mouseleave', b.onMouseLeave);
+    canvas.addEventListener('touchstart', b.onTouchStart, { passive: true });
+    canvas.addEventListener('touchmove', b.onTouchMove, { passive: true });
+    canvas.addEventListener('touchend', b.onTouchEnd);
+    document.addEventListener('keydown', b.onKeyDown);
     this.endTurnBtn.onclick = () => {
       if (this.state.winner || this.aiTurnInProgress) return;
       if (this.aiTeam && this.state.currentTeam === this.aiTeam) return;
       this.doEndTurn();
     };
-
-    // Long press for mobile tooltips
-    let lpTimer = null;
-    let lpFired = false;
-    canvas.addEventListener('touchstart', (e) => {
-      if (e.touches.length !== 1) return;
-      lpFired = false;
-      const touch = e.touches[0];
-      const cell = this.renderer.getCellFromPixel(touch.clientX, touch.clientY);
-      lpTimer = setTimeout(() => {
-        if (cell) {
-          this.hoverCell = cell;
-          lpFired = true;
-          this.renderOnly();
-        }
-      }, 400);
-    }, { passive: true });
-    canvas.addEventListener('touchmove', () => {
-      clearTimeout(lpTimer);
-      if (lpFired) { lpFired = false; this.hoverCell = null; this.renderOnly(); }
-    }, { passive: true });
-    canvas.addEventListener('touchend', (e) => {
-      clearTimeout(lpTimer);
-      if (lpFired) {
-        lpFired = false;
-        this.hoverCell = null;
-        this.renderOnly();
-        e.preventDefault(); // suppress click after long press
-      }
-    });
+    this._boundListeners = b;
   }
 
   // -- Action handlers --
@@ -1998,77 +2223,89 @@ class GameController {
     this.setInfo(`${TEAM_NAME[this.aiTeam]} is thinking... (Space/Esc to skip)`);
     this.updateUI();
 
-    const actions = this.aiPlayer.planTurn(this.state);
+    try {
+      const actions = this.aiPlayer.planTurn(this.state);
 
-    for (const action of actions) {
-      if (this.state.winner) break;
-      const unit = this.state.getUnit(action.unitId);
-      if (!unit || unit.hp <= 0) continue;
+      for (const action of actions) {
+        if (this.state.winner) break;
+        const unit = this.state.getUnit(action.unitId);
+        if (!unit || unit.hp <= 0) continue;
 
-      // Highlight the acting unit
-      this.state.selectedUnitId = action.unitId;
-      this.state.highlightedMoves = [];
-      this.state.highlightedAttacks = [];
-      this.updateUI();
-      await this.aiDelay(400);
-
-      // Pre-move attack
-      if (action.attackBeforeMove && action.attackTargetId !== null) {
-        const target = this.state.getUnit(action.attackTargetId);
-        if (target && target.hp > 0) {
-          this.state.highlightedAttacks = [action.attackTargetId];
-          this.updateUI();
-          await this.aiDelay(300);
-          this.performAttack(unit, target);
-          await this.aiDelay(500);
-        }
-      }
-
-      if (this.state.winner) break;
-
-      // Move
-      if (action.move && unit.hp > 0) {
-        this.state.highlightedMoves = [action.move];
-        this.updateUI();
-        await this.aiDelay(300);
-        this.sound.playMove(unit.type);
-        GameRules.moveUnit(this.state, unit.id, action.move.row, action.move.col);
-        unit.moved = true;
-        this.cancelSelection();
+        // Highlight the acting unit
         this.state.selectedUnitId = action.unitId;
+        this.state.highlightedMoves = [];
+        this.state.highlightedAttacks = [];
         this.updateUI();
-        await this.aiDelay(300);
-      }
+        await this.aiDelay(400);
 
-      // Post-move attack
-      if (!action.attackBeforeMove && action.attackTargetId !== null && unit.hp > 0) {
-        const target = this.state.getUnit(action.attackTargetId);
-        if (target && target.hp > 0) {
-          this.state.highlightedAttacks = [action.attackTargetId];
+        // Pre-move attack
+        if (action.attackBeforeMove && action.attackTargetId !== null) {
+          const target = this.state.getUnit(action.attackTargetId);
+          if (target && target.hp > 0) {
+            this.state.highlightedAttacks = [action.attackTargetId];
+            this.updateUI();
+            await this.aiDelay(300);
+            this.performAttack(unit, target);
+            await this.aiDelay(500);
+          }
+        }
+
+        if (this.state.winner) break;
+
+        // Move
+        if (action.move && unit.hp > 0) {
+          this.state.highlightedMoves = [action.move];
           this.updateUI();
           await this.aiDelay(300);
-          this.performAttack(unit, target);
-          await this.aiDelay(500);
+          this.sound.playMove(unit.type);
+          GameRules.moveUnit(this.state, unit.id, action.move.row, action.move.col);
+          unit.moved = true;
+          this.cancelSelection();
+          this.state.selectedUnitId = action.unitId;
+          this.updateUI();
+          await this.aiDelay(300);
         }
+
+        // Post-move attack
+        if (!action.attackBeforeMove && action.attackTargetId !== null && unit.hp > 0) {
+          const target = this.state.getUnit(action.attackTargetId);
+          if (target && target.hp > 0) {
+            this.state.highlightedAttacks = [action.attackTargetId];
+            this.updateUI();
+            await this.aiDelay(300);
+            this.performAttack(unit, target);
+            await this.aiDelay(500);
+          }
+        }
+
+        // Clear selection after this unit's action
+        this.cancelSelection();
+        this.updateUI();
+        await this.aiDelay(200);
       }
 
-      // Clear selection after this unit's action
-      this.cancelSelection();
-      this.updateUI();
-      await this.aiDelay(200);
+      // End AI turn
+      if (!this.state.winner) {
+        this.doEndTurn();
+      }
+      this.aiTurnInProgress = false;
+      if (!this.state.winner) {
+        this.endTurnBtn.disabled = false;
+      }
+    } catch (e) {
+      // Game ended mid-turn (user clicked New Game) — silently abort
+      if (e.message === 'game ended') return;
+      throw e;
     }
-
-    // End AI turn
-    if (!this.state.winner) {
-      this.doEndTurn();
-    }
-    this.aiTurnInProgress = false;
-    this.endTurnBtn.disabled = !!this.state.winner;
   }
 
   aiDelay(ms) {
     if (this.skipAiAnimation) return Promise.resolve();
-    return new Promise(resolve => setTimeout(resolve, ms));
+    const gid = this._gameId;
+    return new Promise((resolve, reject) => setTimeout(() => {
+      if (this._gameId !== gid) reject(new Error('game ended'));
+      else resolve();
+    }, ms));
   }
 
   // -- Helpers --
