@@ -84,9 +84,11 @@ Three map sizes, selectable in the setup flow after choosing game mode:
 ### Hard Mode Additions
 - **Danger map** (`buildDangerMap`): Pre-computes which hexes each enemy can reach+attack next turn using real BFS pathfinding. Stores actual enemy unit references per hex for precise damage calculation.
 - **Coordinated focus fire** (`identifyFocusTargets`): Scans board for killable enemies (total reachable damage >= HP). Top 2 focus targets get +100 attack bonus, causing multiple units to pile onto the same target.
-- **Kill-danger avoidance**: If total incoming damage at a hex >= unit's HP, -250 penalty. Prevents walking into positions where the unit can be killed next turn.
-- **Archer safety**: Archers get -25 per threat at their hex (on top of general threat penalty). Also -30 (vs -10 normal) for standing adjacent to enemies.
-- **Earlier retreat**: Wounded threshold raised from 40 to 50 HP, retreat pull increased (+10/distance vs +8).
+- **Punish overextension**: +50 bonus for attacking isolated enemies (no allies within 2 hexes), +20 if only 1 ally nearby.
+- **Kill-danger avoidance**: If total incoming damage at a hex >= unit's HP, -120 penalty. Moderate enough that good attack opportunities still outweigh it.
+- **Archer safety**: Archers get -18 per threat at their hex (on top of general threat penalty). Also -15 (vs -10 normal) for standing adjacent to enemies.
+- **Last stand**: When outnumbered 2:1+, retreat is disabled and advance pull boosted to -8/hex at any HP. Prevents tedious end-game chase scenarios.
+- **Same retreat thresholds as Normal**: Wounded retreat at ≤40 HP, +8/distance. Hard mode's advantage comes from smarter decisions, not more caution.
 
 ### Unit Priority Order
 Kill-capable first (+500), archers before melee (+100), adjacent before distant (+80/+40), strong matchups (+30), wounded last (-50)

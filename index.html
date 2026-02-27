@@ -1097,6 +1097,15 @@ class AIPlayer {
       if (context && context.focusTargets.includes(action.attackTargetId)) {
         score += 100;
       }
+
+      // Hard mode: bonus for attacking isolated enemies (punish overextension)
+      if (context) {
+        const etm = this.team === TEAM.BLUE ? TEAM.RED : TEAM.BLUE;
+        const nearbyAllies = state.getLivingUnits(etm).filter(e =>
+          e.id !== target.id && hexDistance(e.row, e.col, target.row, target.col) <= 2);
+        if (nearbyAllies.length === 0) score += 50;
+        else if (nearbyAllies.length === 1) score += 20;
+      }
     }
 
     // ----- POSITIONAL SCORING -----
@@ -1124,21 +1133,21 @@ class AIPlayer {
           totalIncomingDmg += GameRules.calculateDamage(enemy.type, enemy.hp, unit.type, terrain);
         }
 
-        score -= threats.length * 20;
+        score -= threats.length * 15;
 
-        // Can we be killed next turn? Huge penalty
+        // Can we be killed next turn? Moderate penalty (not so high it prevents attacking)
         if (simUnit.hp > 0 && totalIncomingDmg >= simUnit.hp) {
-          score -= 250;
+          score -= 120;
         }
 
         // Wounded and exposed — scale penalty with actual danger
         if (simUnit.hp > 0 && simUnit.hp <= 50) {
-          score -= totalIncomingDmg * 0.5;
+          score -= totalIncomingDmg * 0.3;
         }
 
         // Archer safety — archers heavily penalized in threatened hexes
         if (unit.type === 'archer') {
-          score -= threats.length * 25;
+          score -= threats.length * 18;
         }
       }
     } else {
@@ -1156,25 +1165,29 @@ class AIPlayer {
       score -= threatsToUs * 15;
     }
 
-    // Wounded unit retreat
-    if (simUnit.hp > 0 && simUnit.hp <= (context ? 50 : 40)) {
+    // Last stand detection — when heavily outnumbered, fight instead of flee
+    const myUnits = sim.getLivingUnits(this.team);
+    const lastStand = enemies.length >= myUnits.length * 2;
+
+    // Wounded unit retreat — disabled during last stand
+    if (simUnit.hp > 0 && simUnit.hp <= 40 && !lastStand) {
       let minEnemyDist = Infinity;
       for (const enemy of enemies) {
         const d = hexDistance(finalRow, finalCol, enemy.row, enemy.col);
         if (d < minEnemyDist) minEnemyDist = d;
       }
-      score += minEnemyDist * (context ? 10 : 8);
+      score += minEnemyDist * 8;
       score += terrainDef * 2;
     }
 
-    // Advance toward enemies when healthy and no attack
-    if (!combatResult && simUnit.hp > 60) {
+    // Advance toward enemies — boosted during last stand (any HP)
+    if (!combatResult && simUnit.hp > 0 && (simUnit.hp > 60 || lastStand)) {
       let minEnemyDist = Infinity;
       for (const enemy of enemies) {
         const d = hexDistance(finalRow, finalCol, enemy.row, enemy.col);
         if (d < minEnemyDist) minEnemyDist = d;
       }
-      score -= minEnemyDist * (context ? 5 : 3);
+      score -= minEnemyDist * (lastStand ? 8 : (context ? 5 : 3));
     }
 
     // Hard mode: frontline support — don't leave allies to fight alone
@@ -1236,7 +1249,7 @@ class AIPlayer {
       for (const enemy of enemies) {
         const dist = hexDistance(finalRow, finalCol, enemy.row, enemy.col);
         if (dist === 2) score += 15;
-        if (dist === 1) score -= (context ? 30 : 10);
+        if (dist === 1) score -= (context ? 15 : 10);
       }
     }
 
