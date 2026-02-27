@@ -583,48 +583,27 @@ class CanvasRenderer {
         ctx.lineWidth = 1;
       }
 
-      const radius = HEX_SIZE * 0.38;
-
-      // Shadow
-      ctx.fillStyle = 'rgba(0,0,0,0.3)';
-      ctx.beginPath();
-      ctx.arc(cx + 2, cy + 2, radius, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Unit circle — fresh / moved / done
-      let color = TEAM_COLOR[unit.team];
-      if (unit.attacked)                    color = unit.team === TEAM.BLUE ? '#445570' : '#704545';
-      else if (unit.moved && !unit.attacked) color = unit.team === TEAM.BLUE ? '#3a6ab8' : '#b85a4a';
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(0,0,0,0.4)';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      ctx.lineWidth = 1;
-
-      // Selection ring
+      // Selection glow
       if (isSelected) {
         ctx.strokeStyle = '#ffdd00';
         ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.arc(cx, cy, radius + 4, 0, Math.PI * 2);
+        this.hexPath(cx, cy, HEX_SIZE - 2);
         ctx.stroke();
         ctx.lineWidth = 1;
       }
 
-      // Unit letter
-      ctx.fillStyle = '#fff';
-      ctx.font = `bold ${HEX_SIZE * 0.5}px sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      const unitLetter = { swordsman: 'S', spearman: 'P', archer: 'A', cavalry: 'C' };
-      ctx.fillText(unitLetter[unit.type], cx, cy);
+      // Dim spent units
+      if (unit.attacked) ctx.globalAlpha = 0.45;
+      else if (unit.moved) ctx.globalAlpha = 0.7;
+
+      // Unit icon (team-colored, larger)
+      this.drawUnitIcon(ctx, unit.type, cx, cy - 2, unit.team);
+
+      ctx.globalAlpha = 1.0;
 
       // HP bar
       const barW = HEX_SIZE * 0.9, barH = 4;
-      const barX = cx - barW / 2, barY = cy + radius + 6;
+      const barX = cx - barW / 2, barY = cy + HEX_SIZE * 0.42;
       ctx.fillStyle = 'rgba(0,0,0,0.5)';
       ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
       const hpPct = unit.hp / UNIT_DEFS[unit.type].hp;
@@ -634,11 +613,206 @@ class CanvasRenderer {
       // HP number
       ctx.fillStyle = '#fff';
       ctx.font = `bold ${HEX_SIZE * 0.28}px sans-serif`;
-      ctx.fillText(unit.hp, cx + radius + 2, cy + radius + 6);
+      ctx.fillText(unit.hp, cx + HEX_SIZE * 0.42, barY + 2);
     }
 
     // -- Tooltip --
     if (tooltipData) this.drawTooltip(tooltipData);
+  }
+
+  drawUnitIcon(ctx, type, cx, cy, team) {
+    const s = HEX_SIZE * 0.65;
+    const isBlue = team === TEAM.BLUE;
+    const fill = isBlue ? '#4488dd' : '#dd4444';
+    const dark = isBlue ? '#2a5a99' : '#992a2a';
+    const outline = '#1a1a2e';
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    // Drop shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.beginPath();
+    ctx.ellipse(1, s * 0.55, s * 0.5, s * 0.15, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    switch (type) {
+      case 'swordsman': {
+        // Blade
+        ctx.strokeStyle = '#ccd0d8';
+        ctx.lineWidth = s * 0.14;
+        ctx.beginPath();
+        ctx.moveTo(s * 0.45, -s * 0.85);
+        ctx.lineTo(s * 0.45, s * 0.15);
+        ctx.stroke();
+        // Blade outline
+        ctx.strokeStyle = outline;
+        ctx.lineWidth = s * 0.04;
+        ctx.beginPath();
+        ctx.moveTo(s * 0.45, -s * 0.9);
+        ctx.lineTo(s * 0.45, s * 0.15);
+        ctx.stroke();
+        // Crossguard
+        ctx.fillStyle = '#665544';
+        ctx.fillRect(s * 0.25, s * 0.1, s * 0.4, s * 0.1);
+        // Handle
+        ctx.strokeStyle = '#665544';
+        ctx.lineWidth = s * 0.1;
+        ctx.beginPath();
+        ctx.moveTo(s * 0.45, s * 0.15);
+        ctx.lineTo(s * 0.45, s * 0.35);
+        ctx.stroke();
+        // Body
+        ctx.fillStyle = fill;
+        ctx.fillRect(-s * 0.22, -s * 0.15, s * 0.5, s * 0.45);
+        ctx.fillStyle = dark;
+        ctx.fillRect(-s * 0.25, -s * 0.2, s * 0.55, s * 0.1);
+        // Head
+        ctx.fillStyle = '#aab0bb';
+        ctx.beginPath();
+        ctx.arc(0, -s * 0.38, s * 0.2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#8890a0';
+        ctx.fillRect(-s * 0.2, -s * 0.38, s * 0.4, s * 0.1);
+        // Legs
+        ctx.fillStyle = '#6b4c30';
+        ctx.fillRect(-s * 0.18, s * 0.3, s * 0.15, s * 0.25);
+        ctx.fillRect(s * 0.08, s * 0.3, s * 0.15, s * 0.25);
+        break;
+      }
+      case 'spearman': {
+        // Spear shaft
+        ctx.strokeStyle = '#8B7355';
+        ctx.lineWidth = s * 0.08;
+        ctx.beginPath();
+        ctx.moveTo(s * 0.15, -s * 0.95);
+        ctx.lineTo(s * 0.15, s * 0.5);
+        ctx.stroke();
+        // Spearhead
+        ctx.fillStyle = '#ccd0d8';
+        ctx.beginPath();
+        ctx.moveTo(s * 0.15, -s * 0.95);
+        ctx.lineTo(s * 0.02, -s * 0.7);
+        ctx.lineTo(s * 0.28, -s * 0.7);
+        ctx.closePath();
+        ctx.fill();
+        // Body
+        ctx.fillStyle = fill;
+        ctx.fillRect(-s * 0.22, -s * 0.15, s * 0.45, s * 0.45);
+        ctx.fillStyle = dark;
+        ctx.fillRect(-s * 0.25, -s * 0.2, s * 0.5, s * 0.1);
+        // Head (kettle helm)
+        ctx.fillStyle = '#aab0bb';
+        ctx.beginPath();
+        ctx.arc(0, -s * 0.38, s * 0.2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#aab0bb';
+        ctx.fillRect(-s * 0.28, -s * 0.32, s * 0.56, s * 0.07);
+        // Legs
+        ctx.fillStyle = '#6b4c30';
+        ctx.fillRect(-s * 0.18, s * 0.3, s * 0.15, s * 0.25);
+        ctx.fillRect(s * 0.05, s * 0.3, s * 0.15, s * 0.25);
+        break;
+      }
+      case 'archer': {
+        // Bow
+        ctx.strokeStyle = '#8B6914';
+        ctx.lineWidth = s * 0.1;
+        ctx.beginPath();
+        ctx.moveTo(-s * 0.35, -s * 0.55);
+        ctx.quadraticCurveTo(-s * 0.7, 0, -s * 0.35, s * 0.35);
+        ctx.stroke();
+        // String
+        ctx.strokeStyle = '#aaa';
+        ctx.lineWidth = s * 0.03;
+        ctx.beginPath();
+        ctx.moveTo(-s * 0.35, -s * 0.55);
+        ctx.lineTo(-s * 0.15, 0);
+        ctx.lineTo(-s * 0.35, s * 0.35);
+        ctx.stroke();
+        // Arrow
+        ctx.strokeStyle = '#8B7355';
+        ctx.lineWidth = s * 0.05;
+        ctx.beginPath();
+        ctx.moveTo(-s * 0.15, 0);
+        ctx.lineTo(s * 0.55, 0);
+        ctx.stroke();
+        ctx.fillStyle = '#ccd0d8';
+        ctx.beginPath();
+        ctx.moveTo(s * 0.65, 0);
+        ctx.lineTo(s * 0.48, -s * 0.1);
+        ctx.lineTo(s * 0.48, s * 0.1);
+        ctx.closePath();
+        ctx.fill();
+        // Body
+        ctx.fillStyle = fill;
+        ctx.fillRect(-s * 0.2, -s * 0.12, s * 0.42, s * 0.4);
+        ctx.fillStyle = dark;
+        ctx.fillRect(-s * 0.22, -s * 0.17, s * 0.46, s * 0.1);
+        // Hood
+        ctx.fillStyle = fill;
+        ctx.beginPath();
+        ctx.arc(0, -s * 0.35, s * 0.22, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(-s * 0.22, -s * 0.3);
+        ctx.lineTo(0, -s * 0.6);
+        ctx.lineTo(s * 0.15, -s * 0.3);
+        ctx.fill();
+        // Face
+        ctx.fillStyle = '#e0b888';
+        ctx.fillRect(-s * 0.1, -s * 0.35, s * 0.2, s * 0.15);
+        // Legs
+        ctx.fillStyle = '#6b4c30';
+        ctx.fillRect(-s * 0.16, s * 0.28, s * 0.13, s * 0.25);
+        ctx.fillRect(s * 0.05, s * 0.28, s * 0.13, s * 0.25);
+        break;
+      }
+      case 'cavalry': {
+        // Horse body
+        ctx.fillStyle = isBlue ? '#c8b898' : '#8B6544';
+        ctx.beginPath();
+        ctx.ellipse(0, s * 0.15, s * 0.45, s * 0.22, 0, 0, Math.PI * 2);
+        ctx.fill();
+        // Horse legs
+        const legC = isBlue ? '#a89878' : '#704830';
+        ctx.fillStyle = legC;
+        ctx.fillRect(-s * 0.32, s * 0.3, s * 0.1, s * 0.25);
+        ctx.fillRect(-s * 0.12, s * 0.3, s * 0.1, s * 0.25);
+        ctx.fillRect(s * 0.12, s * 0.3, s * 0.1, s * 0.25);
+        ctx.fillRect(s * 0.28, s * 0.3, s * 0.1, s * 0.25);
+        // Horse head
+        ctx.fillStyle = isBlue ? '#c8b898' : '#8B6544';
+        ctx.beginPath();
+        ctx.moveTo(s * 0.4, s * 0.05);
+        ctx.quadraticCurveTo(s * 0.7, -s * 0.1, s * 0.6, -s * 0.35);
+        ctx.lineTo(s * 0.45, -s * 0.3);
+        ctx.quadraticCurveTo(s * 0.4, -s * 0.05, s * 0.3, s * 0.05);
+        ctx.closePath();
+        ctx.fill();
+        // Horse ear
+        ctx.fillStyle = isBlue ? '#b8a888' : '#7a5534';
+        ctx.beginPath();
+        ctx.moveTo(s * 0.55, -s * 0.35);
+        ctx.lineTo(s * 0.6, -s * 0.5);
+        ctx.lineTo(s * 0.65, -s * 0.35);
+        ctx.closePath();
+        ctx.fill();
+        // Rider body
+        ctx.fillStyle = fill;
+        ctx.fillRect(-s * 0.12, -s * 0.25, s * 0.3, s * 0.32);
+        ctx.fillStyle = dark;
+        ctx.fillRect(-s * 0.15, -s * 0.3, s * 0.35, s * 0.08);
+        // Rider head
+        ctx.fillStyle = '#aab0bb';
+        ctx.beginPath();
+        ctx.arc(s * 0.03, -s * 0.45, s * 0.16, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      }
+    }
+    ctx.restore();
   }
 
   drawTooltip({ row, col, lines }) {
