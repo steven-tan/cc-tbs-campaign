@@ -108,13 +108,13 @@ canvas { border: 2px solid #333; cursor: pointer; display: none; max-width: 100%
   color: #aaa;
   margin-bottom: 20px;
 }
-.start-buttons, #team-pick {
+.start-buttons, #team-pick, #hotseat-pick {
   display: flex;
   flex-direction: column;
   gap: 12px;
   align-items: center;
 }
-.start-buttons button, #team-pick button {
+.start-buttons button, #team-pick button, #hotseat-pick button {
   padding: 12px 40px;
   font-size: 18px;
   font-weight: bold;
@@ -124,7 +124,7 @@ canvas { border: 2px solid #333; cursor: pointer; display: none; max-width: 100%
   min-width: 220px;
   transition: opacity 0.2s, transform 0.1s;
 }
-.start-buttons button:hover, #team-pick button:hover {
+.start-buttons button:hover, #team-pick button:hover, #hotseat-pick button:hover {
   opacity: 0.85;
   transform: scale(1.03);
 }
@@ -206,15 +206,20 @@ canvas { border: 2px solid #333; cursor: pointer; display: none; max-width: 100%
       <button class="diff-btn size-btn active" data-size="medium">Medium</button>
       <button class="diff-btn size-btn" data-size="large">Large</button>
     </div>
+    <p style="margin-top:12px;">Terrain:</p>
+    <div class="diff-row">
+      <button class="diff-btn density-btn" data-density="light">Light</button>
+      <button class="diff-btn density-btn active" data-density="normal">Normal</button>
+    </div>
     <p style="margin-top:12px;">Difficulty:</p>
     <div class="diff-row">
       <button class="diff-btn diff-opt active" data-diff="normal">Normal</button>
       <button class="diff-btn diff-opt" data-diff="hard">Hard</button>
     </div>
     <p style="margin-top:16px;">Choose your side:</p>
-    <button id="pick-blue" style="background:#4488ff;color:#fff;padding:12px 40px;font-size:18px;font-weight:bold;border:none;border-radius:6px;cursor:pointer;min-width:220px;">Play as Blue (go first)</button>
-    <button id="pick-red" style="background:#ff4444;color:#fff;padding:12px 40px;font-size:18px;font-weight:bold;border:none;border-radius:6px;cursor:pointer;min-width:220px;">Play as Red</button>
-    <button id="pick-back">Back</button>
+    <button id="pick-blue" style="background:#4488ff;color:#fff;">Play as Blue (go first)</button>
+    <button id="pick-red" style="background:#ff4444;color:#fff;">Play as Red</button>
+    <button id="pick-back" style="background:#555;color:#fff;">Back</button>
   </div>
   <div id="hotseat-pick" style="display:none;">
     <p>Map Size:</p>
@@ -223,8 +228,14 @@ canvas { border: 2px solid #333; cursor: pointer; display: none; max-width: 100%
       <button class="diff-btn hs-size-btn active" data-size="medium">Medium</button>
       <button class="diff-btn hs-size-btn" data-size="large">Large</button>
     </div>
-    <button id="hs-start" style="margin-top:16px;background:#ff8844;color:#fff;padding:12px 40px;font-size:18px;font-weight:bold;border:none;border-radius:6px;cursor:pointer;min-width:220px;">Start Game</button>
-    <button id="hs-back">Back</button>
+    <p style="margin-top:12px;">Terrain:</p>
+    <div class="diff-row">
+      <button class="diff-btn hs-density-btn" data-density="light">Light</button>
+      <button class="diff-btn hs-density-btn active" data-density="normal">Normal</button>
+    </div>
+    <p style="margin-top:16px;"></p>
+    <button id="hs-start" style="background:#ff8844;color:#fff;">Start Game</button>
+    <button id="hs-back" style="background:#555;color:#fff;">Back</button>
   </div>
 </div>
 <div id="about-overlay">
@@ -284,10 +295,12 @@ canvas { border: 2px solid #333; cursor: pointer; display: none; max-width: 100%
     <tr><td>Ally directly behind defender (backstab)</td><td>+25% attack</td></tr>
   </table>
   <p>Backstab overrides count-based bonuses (no further stacking). Counter-attacks do not receive flanking bonuses.</p>
+  <h3>Zone of Control</h3>
+  <p>Units exert a zone of control (ZOC) on all 6 adjacent hexes. A unit cannot move directly from one enemy ZOC hex to another &mdash; it must exit ZOC first. This prevents slipping past enemies. Cavalry ignores ZOC from all units except spearmen.</p>
   <h3>Map sizes</h3>
   <p>Small (7&times;7, 5 units/side) for quick skirmishes. Medium (9&times;9, 7 units/side) for strategic depth. Large (9&times;13, 8 units/side) for extended campaigns. Terrain is randomly generated each game with vertical symmetry for fairness.</p>
   <h3>Combat notes</h3>
-  <p>Damaged units deal less damage (down to ~50% at very low HP). Defenders counter-attack if the attacker is within their range. Mountains and forests reduce incoming damage by 30%. Water is impassable. Cavalry cannot enter mountains. Swordsmen are strong vs spearmen. Spearmen and archers are strong vs cavalry. Cavalry is strong vs swordsmen and archers.</p>
+  <p>Damaged units deal less damage (down to ~50% at very low HP). Defenders counter-attack if the attacker is within their range. Mountains and forests reduce incoming damage by 30%. Water is impassable. Cavalry cannot enter mountains. Units exert ZOC on adjacent hexes (see above). Swordsmen are strong vs spearmen. Spearmen and archers are strong vs cavalry. Cavalry is strong vs swordsmen and archers.</p>
 </div>
 
 <script>
@@ -417,7 +430,12 @@ function recalcCanvasDims() {
 // ============================================================
 
 /** Generate a random terrain map with vertical symmetry for fairness. */
-function generateMap(rows, cols) {
+const TERRAIN_DENSITY = {
+  normal: { mountain: 0.10, forest: 0.14, water: 0.04, midRow: 0.25 },
+  light:  { mountain: 0.05, forest: 0.07, water: 0.02, midRow: 0.12 },
+};
+
+function generateMap(rows, cols, density) {
   const P = TERRAIN.PLAINS, M = TERRAIN.MOUNTAINS, F = TERRAIN.FOREST, W = TERRAIN.WATER;
   // Start with all plains
   const map = Array.from({ length: rows }, () => Array(cols).fill(P));
@@ -426,9 +444,10 @@ function generateMap(rows, cols) {
   const innerCells = (midRow - 1) * cols; // cells in the top half (excluding spawn row)
 
   // Terrain budgets (approximate cell counts for the top half; mirrored to bottom)
-  const mtnCount = Math.max(2, Math.round(innerCells * 0.10));
-  const forestCount = Math.max(2, Math.round(innerCells * 0.14));
-  const waterCount = Math.max(1, Math.round(innerCells * 0.04));
+  const d = TERRAIN_DENSITY[density] || TERRAIN_DENSITY.normal;
+  const mtnCount = Math.max(1, Math.round(innerCells * d.mountain));
+  const forestCount = Math.max(1, Math.round(innerCells * d.forest));
+  const waterCount = Math.max(0, Math.round(innerCells * d.water));
 
   // Collect eligible cells for placement (rows 1 through midRow-1 = top half, excluding spawn)
   const topCells = [];
@@ -479,7 +498,7 @@ function generateMap(rows, cols) {
   // Middle row (odd-row grids): scatter some terrain independently
   if (rows % 2 === 1) {
     const mr = midRow;
-    const midBudget = Math.max(1, Math.round(cols * 0.25));
+    const midBudget = Math.max(1, Math.round(cols * d.midRow));
     const midIndices = Array.from({ length: cols }, (_, i) => i);
     for (let i = midIndices.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
@@ -497,7 +516,7 @@ function generateMap(rows, cols) {
 
   // Connectivity check: BFS from any top-row cell to any bottom-row cell
   // using infantry movement (worst-case excluding cavalry which can't do mountains)
-  if (!mapIsConnected(map, rows, cols)) return generateMap(rows, cols);
+  if (!mapIsConnected(map, rows, cols)) return generateMap(rows, cols, density);
 
   return map;
 }
@@ -590,12 +609,27 @@ class GameState {
 
 class GameRules {
 
-  /** Returns all cells a unit can move to, respecting terrain and occupancy. */
-  static getMovableCells(state, unit) {
+  /** Is (row,col) in an enemy's zone of control relevant to the moving unit?
+   *  Cavalry only affected by spearman ZOC; all other units affected by any enemy. */
+  static isInZOC(state, row, col, movingUnit) {
+    for (const nb of hexNeighbors(row, col)) {
+      const u = state.getUnitAt(nb.row, nb.col);
+      if (!u || u.hp <= 0 || u.team === movingUnit.team) continue;
+      if (movingUnit.type === 'cavalry' && u.type !== 'spearman') continue;
+      return true;
+    }
+    return false;
+  }
+
+  /** Returns all cells a unit can move to, respecting terrain, occupancy, and ZOC.
+   *  If parentMap (a Map) is provided, it is populated with parent pointers for path reconstruction. */
+  static getMovableCells(state, unit, parentMap) {
     const maxMove = UNIT_DEFS[unit.type].move;
     const visited = new Map();
+    const startKey = `${unit.row},${unit.col}`;
     const queue = [{ row: unit.row, col: unit.col, remaining: maxMove }];
-    visited.set(`${unit.row},${unit.col}`, maxMove);
+    visited.set(startKey, maxMove);
+    if (parentMap) parentMap.set(startKey, null);
 
     while (queue.length > 0) {
       const { row, col, remaining } = queue.shift();
@@ -608,7 +642,12 @@ class GameRules {
         if (visited.has(key) && visited.get(key) >= rem) continue;
         const occ = state.getUnitAt(nb.row, nb.col);
         if (occ && occ.team !== unit.team) continue;
+        // ZOC: can't move from one enemy ZOC hex to another (except leaving start)
+        if (!(row === unit.row && col === unit.col) &&
+            GameRules.isInZOC(state, row, col, unit) &&
+            GameRules.isInZOC(state, nb.row, nb.col, unit)) continue;
         visited.set(key, rem);
+        if (parentMap) parentMap.set(key, `${row},${col}`);
         queue.push({ row: nb.row, col: nb.col, remaining: rem });
       }
     }
@@ -621,6 +660,18 @@ class GameRules {
       cells.push({ row: r, col: c });
     }
     return cells;
+  }
+
+  /** Reconstruct the path from a parentMap (built by getMovableCells) to a target cell. */
+  static reconstructPath(parentMap, targetRow, targetCol) {
+    const path = [];
+    let key = `${targetRow},${targetCol}`;
+    while (key && parentMap.has(key)) {
+      const [r, c] = key.split(',').map(Number);
+      path.unshift({ row: r, col: c });
+      key = parentMap.get(key);
+    }
+    return path;
   }
 
   /** Returns enemy units within attack range. */
@@ -1243,7 +1294,7 @@ class CanvasRenderer {
     ctx.closePath();
   }
 
-  render(state, hoverCell, tooltipData) {
+  render(state, hoverCell, tooltipData, hoverPath) {
     const ctx = this.ctx;
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
@@ -1342,6 +1393,31 @@ class CanvasRenderer {
         ctx.lineWidth = 1;
         ctx.stroke();
       }
+    }
+
+    // -- Movement path preview --
+    if (hoverPath && hoverPath.length > 1) {
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+      ctx.lineWidth = 3;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      const p0 = hexToPixel(hoverPath[0].row, hoverPath[0].col);
+      ctx.moveTo(p0.x, p0.y);
+      for (let i = 1; i < hoverPath.length; i++) {
+        const p = hexToPixel(hoverPath[i].row, hoverPath[i].col);
+        ctx.lineTo(p.x, p.y);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // Dots at each waypoint (skip start)
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+      for (let i = 1; i < hoverPath.length; i++) {
+        const p = hexToPixel(hoverPath[i].row, hoverPath[i].col);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.lineWidth = 1;
     }
 
     // -- Units --
@@ -1816,6 +1892,7 @@ class GameController {
   setupStartScreen() {
     this.selectedDifficulty = 'normal';
     this.selectedMapSize = 'medium';
+    this.selectedDensity = 'normal';
 
     // --- Play vs AI ---
     document.getElementById('btn-vs-ai').addEventListener('click', () => {
@@ -1828,6 +1905,14 @@ class GameController {
         document.querySelectorAll('.size-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         this.selectedMapSize = btn.dataset.size;
+      });
+    }
+    // Terrain density toggle (AI)
+    for (const btn of document.querySelectorAll('.density-btn')) {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.density-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        this.selectedDensity = btn.dataset.density;
       });
     }
     // Difficulty toggle
@@ -1856,6 +1941,14 @@ class GameController {
         document.querySelectorAll('.hs-size-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         this.selectedMapSize = btn.dataset.size;
+      });
+    }
+    // Terrain density toggle (Hotseat)
+    for (const btn of document.querySelectorAll('.hs-density-btn')) {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.hs-density-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        this.selectedDensity = btn.dataset.density;
       });
     }
     document.getElementById('hs-start').addEventListener('click', () => this.startGame(null));
@@ -1939,12 +2032,13 @@ class GameController {
     this.aiTurnInProgress = false;
     this.skipAiAnimation = false;
     this.hoverCell = null;
+    this._moveParentMap = null;
     this.state = null;
     this.renderer = null;
   }
 
   createInitialState(preset) {
-    const map = generateMap(ROWS, COLS);
+    const map = generateMap(ROWS, COLS, this.selectedDensity);
     const units = generateUnits(preset, ROWS, COLS);
     return GameState.createInitial(map, units);
   }
@@ -2074,7 +2168,8 @@ class GameController {
       }
     } else {
       // Can move — show movement range
-      s.highlightedMoves = GameRules.getMovableCells(s, unit);
+      this._moveParentMap = new Map();
+      s.highlightedMoves = GameRules.getMovableCells(s, unit, this._moveParentMap);
       // If hasn't attacked yet, also show attack targets (fire before move)
       if (!unit.attacked) {
         const targets = GameRules.getAttackTargets(s, unit);
@@ -2316,6 +2411,7 @@ class GameController {
     s.highlightedMoves = [];
     s.highlightedAttacks = [];
     s.phase = PHASE.SELECT;
+    this._moveParentMap = null;
   }
 
   checkAllActed() {
@@ -2382,7 +2478,18 @@ class GameController {
     return null;
   }
 
-  renderOnly() { this.renderer.render(this.state, this.hoverCell, this.computeTooltip()); }
+  computeHoverPath() {
+    if (!this._moveParentMap || !this.hoverCell) return null;
+    const s = this.state;
+    if (s.phase !== PHASE.MOVE) return null;
+    const { row, col } = this.hoverCell;
+    if (!s.highlightedMoves.some(c => c.row === row && c.col === col)) return null;
+    const unit = s.getUnit(s.selectedUnitId);
+    if (row === unit.row && col === unit.col) return null;
+    return GameRules.reconstructPath(this._moveParentMap, row, col);
+  }
+
+  renderOnly() { this.renderer.render(this.state, this.hoverCell, this.computeTooltip(), this.computeHoverPath()); }
 
   updateUI() {
     const s = this.state;
@@ -2400,7 +2507,7 @@ class GameController {
       this.endTurnBtn.style.color = '#fff';
       this.endTurnBtn.disabled = this.aiTurnInProgress;
     }
-    this.renderer.render(this.state, this.hoverCell, this.computeTooltip());
+    this.renderer.render(this.state, this.hoverCell, this.computeTooltip(), this.computeHoverPath());
   }
 }
 
