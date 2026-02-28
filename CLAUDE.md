@@ -1,6 +1,34 @@
-# Fantasy Tactical Battle
+# TBS Campaign Game
 
-Fantasy-themed turn-based tactical combat game (originally Advance Wars-inspired). Single HTML file for now, but structured for future modularization.
+Asian-themed turn-based strategy game with persistent campaign progression. Forked from [cc-tbs-initial](https://github.com/steven-tan/cc-tbs-initial) (Feb 2026), which contains the completed tactical engine foundation this project builds on.
+
+## Project Direction
+
+- **Theme:** Asian aesthetic (art, UI, naming)
+- **Target:** Desktop-only (no mobile/responsive constraints)
+- **Core loop:** Campaign map → battle → results feed back into persistent roster
+- **Persistence:** Units survive battles, gain XP, track kills/damage dealt across their lifetime
+- **Breakthroughs:** Unit unlocks triggered by lifetime milestones (kills, damage dealt, etc.)
+- **Save system:** localStorage-based persistent campaign state (distinct from the ephemeral `GameState` used per-battle)
+
+## Architecture (planned)
+
+Builds on the existing tactical engine layers (GameState, GameRules, AIPlayer, CanvasRenderer, SoundManager, GameController) and adds:
+
+| Layer | Role |
+|---|---|
+| **CampaignState** | Persistent roster, unit XP/kills, progression flags. Serializes to localStorage. |
+| **CampaignController** | Campaign map, battle setup from roster, applies results (XP, breakthroughs, losses) after battle |
+
+The tactical battle becomes a subroutine: CampaignController spawns a battle with specific units, battle resolves, results return to campaign layer.
+
+## Testing Strategy
+
+Keep `index.html` as a standalone tactical skirmish for fast iteration on combat mechanics without needing to run through campaign flow. Campaign entry point will be a separate file.
+
+---
+
+<!-- original cc-tbs-initial content below — keep for tactical engine reference -->
 
 ## Architecture
 
